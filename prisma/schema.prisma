@@ -1,0 +1,231 @@
+// StudyFlow Canonical Prisma Schema Definition (PostgreSQL)
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+  ADVISOR
+  TA
+}
+
+enum Priority {
+  URGENT
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum TaskStatus {
+  BACKLOG
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum SlotType {
+  PREFERRED_STUDY
+  CLASS
+  WORK
+  PERSONAL
+}
+
+enum ScheduleMode {
+  BALANCED
+  FRONT_LOADED
+  POMODORO
+}
+
+enum SessionStatus {
+  SCHEDULED
+  COMPLETED
+  MISSED
+  CANCELLED
+}
+
+model User {
+  id                       String             @id @default(uuid())
+  email                    String             @unique
+  passwordHash             String
+  name                     String
+  role                     Role               @default(STUDENT)
+  major                    String?            @default("General Studies")
+  term                     String?            @default("Fall 2026")
+  targetDailyStudyCapHours Float              @default(5.5)
+  defaultSessionMinutes    Int                @default(50)
+  preferredBreakMinutes    Int                @default(10)
+  preferredStudyTime       String?            @default("afternoon")
+  bufferMinutes            Int                @default(15)
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+
+  subjects                 Subject[]
+  tasks                    Task[]
+  availabilitySlots        AvailabilitySlot[]
+  schedules                Schedule[]
+  studySessions            StudySession[]
+  notifications            AcademicNotification[]
+
+  @@index([email])
+}
+
+model Subject {
+  id                 String         @id @default(uuid())
+  userId             String
+  code               String         // e.g. "CS 201", "MATH 241"
+  name               String         // e.g. "Data Structures", "Multivariable Calculus"
+  instructor         String?
+  credits            Int            @default(4)
+  colorKey           String         @default("cs")
+  weeklyTargetHours  Float          @default(6.0)
+  classroom          String?
+  officeHours        String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks              Task[]
+  studySessions      StudySession[]
+
+  @@index([userId])
+}
+
+model Task {
+  id               String         @id @default(uuid())
+  userId           String
+  subjectId        String
+  title            String
+  dueDate          DateTime
+  estimatedHours   Float          @default(2.0)
+  remainingHours   Float          @default(2.0)
+  type             String         @default("assignment")
+  priority         Priority       @default(MEDIUM)
+  status           TaskStatus     @default(BACKLOG)
+  notes            String?
+  subtasks         Json?          // Array of { id, title, completed }
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject          Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  studySessions    StudySession[]
+
+  @@index([userId, status])
+  @@index([dueDate])
+}
+
+model AvailabilitySlot {
+  id           String    @id @default(uuid())
+  userId       String
+  dayOfWeek    Int       // 0 = Sunday, 1 = Monday ... 6 = Saturday
+  startTime    String    // "09:00"
+  endTime      String    // "11:30"
+  type         SlotType  @default(PREFERRED_STUDY)
+  label        String?
+  createdAt    DateTime  @default(now())
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, dayOfWeek])
+}
+
+model Schedule {
+  id             String         @id @default(uuid())
+  userId         String
+  startDate      DateTime
+  endDate        DateTime
+  mode           ScheduleMode   @default(BALANCED)
+  createdAt      DateTime       @default(now())
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions       StudySession[]
+
+  @@index([userId])
+}
+
+model StudySession {
+  id                   String     @id @default(uuid())
+  userId               String
+  scheduleId           String?
+  taskId               String
+  subjectId            String
+  date                 String     // "YYYY-MM-DD"
+  startTime            String     // "10:00"
+  endTime              String     // "11:30"
+  durationMinutes      Int            @default(90)
+  completed            Boolean        @default(false)
+  status               SessionStatus  @default(SCHEDULED)
+  actualMinutesLogged  Int?
+  locked               Boolean        @default(false)
+  notes                String?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  user                 User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schedule             Schedule?  @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  task                 Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  subject              Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@index([taskId])
+}
+
+model AcademicNotification {
+  id           String    @id @default(uuid())
+  userId       String
+  category     String    // "deadline" | "schedule" | "conflict" | "announcement" | "task_completed"
+  title        String
+  description  String
+  timestamp    DateTime  @default(now())
+  read         Boolean   @default(false)
+  actionUrl    String?
+  actionLabel  String?
+  relatedId    String?
+  priority     String?   @default("normal")
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+}
+
+model Announcement {
+  id              String    @id @default(uuid())
+  title           String
+  content         String
+  author          String
+  priority        String    @default("normal")
+  targetCohort    String    @default("all")
+  pinned          Boolean   @default(false)
+  status          String    @default("published")
+  publishedAt     DateTime  @default(now())
+  expiresAt       DateTime?
+
+  @@index([publishedAt])
+}
+
+model AuditLog {
+  id            String    @id @default(uuid())
+  adminId       String
+  adminEmail    String
+  adminName     String
+  action        String    // e.g. "USER_ROLE_UPDATE", "USER_STATUS_CHANGE", "ANNOUNCEMENT_DELETE", "SETTINGS_UPDATE"
+  category      String    @default("security") // "user_management" | "security" | "broadcast" | "curriculum" | "system"
+  targetId      String?
+  targetType    String?   // "User", "Announcement", "Subject", "System"
+  details       String?   // Text details or stringified JSON payload
+  ipAddress     String?
+  timestamp     DateTime  @default(now())
+
+  @@index([timestamp])
+  @@index([adminId])
+  @@index([category])
+  @@index([action])
+}
+
