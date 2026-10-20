@@ -3,33 +3,34 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import express from 'express';
-import apiRoutes from './src/server/routes';
-import { errorHandler } from './src/server/middleware/errorHandler';
-import { config } from './src/server/config';
+// 1. Load env FIRST (before any other imports)
+import dotenv from 'dotenv';
+dotenv.config();
 
-export async function createServer() {
+// 2. Now safely import everything else
+import express from 'express';
+import { createServer as createViteServer } from 'vite';
+
+async function start() {
+  // Dynamic imports so they run AFTER dotenv
+  const { default: apiRoutes } = await import('./src/server/routes');
+  const { errorHandler } = await import('./src/server/middleware/errorHandler');
+  const { config } = await import('./src/server/config');
+
   const app = express();
 
-  // Parse JSON payloads with strict limit
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true }));
 
-  // Mount API endpoints under /api
   app.use('/api', apiRoutes);
-
-  // Global Error Handler for /api routes
   app.use(errorHandler);
 
-  // In production, serve built client from dist
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static('dist'));
     app.get('*', (req, res) => {
       res.sendFile('dist/index.html', { root: '.' });
     });
   } else {
-    // In dev, attach Vite middleware dynamically
-    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -37,14 +38,15 @@ export async function createServer() {
     app.use(vite.middlewares);
   }
 
-  return app;
+  app.listen(config.port, '0.0.0.0', () => {
+    console.log(`[StudyFlow] Academic server running on port ${config.port}`);
+    console.log(`→ http://localhost:${config.port}`);
+  });
 }
 
-// Start standalone server when executed directly
 if (process.env.NODE_ENV !== 'test') {
-  createServer().then((app) => {
-    app.listen(config.port, '0.0.0.0', () => {
-      console.log(`[StudyFlow] Academic server running on port ${config.port}`);
-    });
+  start().catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
   });
 }
