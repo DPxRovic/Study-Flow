@@ -8,7 +8,7 @@ import { AuthenticatedRequest } from '../middleware/auth';
 import { prisma } from '../db/prisma';
 import { hashPassword, comparePassword, generateToken } from '../utils/jwt';
 import { ApiError } from '../utils/ApiError';
-import { validateEmail, validatePassword, validateString } from '../utils/validators';
+import { validateEmail, validatePassword, validateString, validateStudyPreferences } from '../utils/validators';
 
 export class AuthController {
   // POST /api/auth/register
@@ -143,35 +143,19 @@ export class AuthController {
         throw ApiError.unauthorized();
       }
 
-      const {
-        name,
-        major,
-        term,
-        targetDailyStudyCapHours,
-        defaultSessionMinutes,
-        preferredBreakMinutes,
-        preferredStudyTime,
-        bufferMinutes,
-      } = req.body;
-
+      const { name, major, term } = req.body;
       const updates: any = {};
-      if (name) updates.name = validateString(name, 'Name', 2, 80);
-      if (major) updates.major = validateString(major, 'Major', 2, 100);
-      if (term) updates.term = validateString(term, 'Term', 2, 50);
-      if (targetDailyStudyCapHours !== undefined) {
-        updates.targetDailyStudyCapHours = Number(targetDailyStudyCapHours);
-      }
-      if (defaultSessionMinutes !== undefined) {
-        updates.defaultSessionMinutes = Number(defaultSessionMinutes);
-      }
-      if (preferredBreakMinutes !== undefined) {
-        updates.preferredBreakMinutes = Number(preferredBreakMinutes);
-      }
-      if (preferredStudyTime) {
-        updates.preferredStudyTime = preferredStudyTime;
-      }
-      if (bufferMinutes !== undefined) {
-        updates.bufferMinutes = Number(bufferMinutes);
+
+      if (name !== undefined) updates.name = validateString(name, 'Name', 2, 80);
+      if (major !== undefined) updates.major = validateString(major, 'Major', 2, 100);
+      if (term !== undefined) updates.term = validateString(term, 'Term', 2, 50);
+
+      // Validate study preferences using strict bounds
+      const validPrefs = validateStudyPreferences(req.body);
+      Object.assign(updates, validPrefs);
+
+      if (Object.keys(updates).length === 0) {
+        throw ApiError.badRequest('At least one profile or preference field must be provided to update');
       }
 
       const updatedUser = await prisma.user.update({

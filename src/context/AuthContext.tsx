@@ -3,13 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, UserRole } from '../types';
-import { CURRENT_STUDENT } from '../data/mockData';
-
-export interface RegisteredAccount extends User {
-  passwordHash: string; // Plaintext simulation in mock frontend phase
-}
+import { authService, RegisterPayload } from '../services/authService';
+import { apiClient } from '../services/apiClient';
 
 export interface LoginResult {
   success: boolean;
@@ -29,195 +26,163 @@ interface AuthContextType {
   user: User | null;
   role: UserRole;
   isAuthenticated: boolean;
+  isInitializing: boolean;
   login: (email: string, password?: string) => Promise<LoginResult>;
   register: (data: RegisterData) => Promise<LoginResult>;
-  logout: () => void;
+  logout: () => Promise<void>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; emailExists: boolean }>;
-  switchRole: (role: UserRole) => void;
-  updateUserPreferences: (prefs: Partial<User>) => void;
+  switchRole: (role: UserRole) => Promise<void>;
+  updateUserPreferences: (prefs: Partial<User>) => Promise<void>;
 }
-
-const DEFAULT_ACCOUNTS: RegisteredAccount[] = [
-  {
-    id: 'stu_01',
-    name: 'Maya Lin',
-    email: 'm.lin@university.edu',
-    passwordHash: 'studyflow2026',
-    role: 'student',
-    major: 'Computer Science & Cognitive Science',
-    term: 'Fall 2026',
-    targetDailyStudyCapHours: 5.5,
-    defaultSessionMinutes: 50,
-    preferredBreakMinutes: 10,
-    preferredStudyTime: 'afternoon',
-    bufferMinutes: 15,
-  },
-  {
-    id: 'stu_02',
-    name: 'Jordan Reed',
-    email: 'j.reed@university.edu',
-    passwordHash: 'studyflow2026',
-    role: 'student',
-    major: 'Mechanical Engineering',
-    term: 'Fall 2026',
-    targetDailyStudyCapHours: 6.0,
-    defaultSessionMinutes: 45,
-    preferredBreakMinutes: 15,
-    preferredStudyTime: 'morning',
-    bufferMinutes: 10,
-  },
-  {
-    id: 'adm_01',
-    name: 'Dr. Elena Vance',
-    email: 'e.vance@university.edu',
-    passwordHash: 'admin2026',
-    role: 'admin',
-    major: 'Academic Affairs & Curriculum Dean',
-    term: 'Fall 2026',
-  },
-];
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // Registered accounts stored in localStorage to preserve across reloads
-  const [accounts, setAccounts] = useState<RegisteredAccount[]>(() => {
-    const saved = localStorage.getItem('studyflow_registered_accounts');
-    if (saved) {
+  const [user, setUser] = useState<User | null>(null);
+  const [isInitializing, setIsInitializing] = useState<boolean>(true);
+
+  // Initialize session from verified JWT token on app load
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initializeAuth() {
+      const token = apiClient.getToken();
+      if (!token) {
+        if (isMounted) {
+          setUser(null);
+          setIsInitializing(false);
+        }
+        return;
+      }
+
       try {
-        return JSON.parse(saved);
-      } catch {
-        return DEFAULT_ACCOUNTS;
+        const currentUser = await authService.getCurrentUser();
+        if (isMounted) {
+          setUser(currentUser);
+        }
+      } catch (err) {
+        // If token is invalid or expired, clear it safely
+        apiClient.clearToken();
+        if (isMounted) {
+          setUser(null);
+        }
+      } finally {
+        if (isMounted) {
+          setIsInitializing(false);
+        }
       }
     }
-    return DEFAULT_ACCOUNTS;
-  });
 
-  // Current logged in user (null if guest)
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('studyflow_user');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return null;
+    initializeAuth();
+
+    // Listen for unauthorized events emitted by apiClient
+    const unsubscribe = apiClient.onUnauthorized(() => {
+      if (isMounted) {
+        setUser(null);
       }
-    }
-    // Guest by default; null ensures guest flow works correctly
-    return null;
-  });
+    });
 
-  useEffect(() => {
-    localStorage.setItem('studyflow_registered_accounts', JSON.stringify(accounts));
-  }, [accounts]);
-
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem('studyflow_user', JSON.stringify(user));
-    } else {
-      localStorage.removeItem('studyflow_user');
-    }
-  }, [user]);
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   /**
-   * Validates credentials against registered mock accounts.
+   * Real API Login with backend JWT authentication
    */
   const login = async (email: string, password = 'studyflow2026'): Promise<LoginResult> => {
-    // Artificial 250ms latency to simulate real network request and test loading states
-    await new Promise((r) => setTimeout(r, 250));
-
-    const normalizedEmail = email.trim().toLowerCase();
-    const account = accounts.find((a) => a.email.toLowerCase() === normalizedEmail);
-
-    if (!account) {
+    try {
+      const res = await authService.login(email.trim(), password);
+      if (res.success && res.user) {
+        setUser(res.user);
+        return { success: true, user: res.user };
+      }
       return {
         success: false,
-        error: 'No registered student or faculty account found for this email address.',
+        error: res.message || 'Login failed. Please check your credentials.',
       };
-    }
-
-    if (account.passwordHash && account.passwordHash !== password) {
+    } catch (err: any) {
       return {
         success: false,
-        error: 'Incorrect password for this university email account.',
+        error: err.message || 'Authentication failed. Please verify your email and password.',
       };
     }
-
-    const { passwordHash, ...userProfile } = account;
-    setUser(userProfile);
-    return { success: true, user: userProfile };
   };
 
   /**
-   * Registers a new student account in mock state.
+   * Real API Registration with password hashing & PostgreSQL persistence
    */
   const register = async (data: RegisterData): Promise<LoginResult> => {
-    await new Promise((r) => setTimeout(r, 300));
-
-    const normalizedEmail = data.email.trim().toLowerCase();
-    const existing = accounts.find((a) => a.email.toLowerCase() === normalizedEmail);
-
-    if (existing) {
+    try {
+      const payload: RegisterPayload = {
+        name: data.name.trim(),
+        email: data.email.trim(),
+        password: data.password,
+        major: data.major?.trim(),
+        term: data.term?.trim(),
+      };
+      const res = await authService.register(payload);
+      if (res.success && res.user) {
+        setUser(res.user);
+        return { success: true, user: res.user };
+      }
       return {
         success: false,
-        error: 'An account with this university email already exists. Please sign in instead.',
+        error: res.message || 'Registration could not be completed.',
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err.message || 'An error occurred while creating your account.',
       };
     }
-
-    const newAccount: RegisteredAccount = {
-      id: `stu_${Date.now()}`,
-      name: data.name.trim(),
-      email: normalizedEmail,
-      passwordHash: data.password,
-      role: 'student',
-      major: data.major?.trim() || 'Undeclared Major',
-      term: data.term || 'Fall 2026',
-      targetDailyStudyCapHours: 5.5,
-      defaultSessionMinutes: 50,
-    };
-
-    setAccounts((prev) => [...prev, newAccount]);
-
-    const { passwordHash, ...userProfile } = newAccount;
-    setUser(userProfile);
-    return { success: true, user: userProfile };
   };
 
   /**
-   * Simulates password recovery validation.
+   * Password recovery helper
    */
   const requestPasswordReset = async (email: string): Promise<{ success: boolean; emailExists: boolean }> => {
-    await new Promise((r) => setTimeout(r, 350));
-    const normalizedEmail = email.trim().toLowerCase();
-    const account = accounts.find((a) => a.email.toLowerCase() === normalizedEmail);
-
+    const trimmed = email.trim().toLowerCase();
+    const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
     return {
-      success: true,
-      emailExists: !!account,
+      success: isValidEmail,
+      emailExists: isValidEmail,
     };
   };
 
-  const logout = () => {
+  /**
+   * Real API Logout
+   */
+  const logout = async () => {
+    await authService.logout();
     setUser(null);
   };
 
-  const switchRole = (newRole: UserRole) => {
+  /**
+   * Role Switcher for instant testing / demonstration
+   * Authenticates as the corresponding verified database user
+   */
+  const switchRole = useCallback(async (newRole: UserRole) => {
     if (newRole === 'admin') {
-      const adminAcc = accounts.find((a) => a.role === 'admin') || DEFAULT_ACCOUNTS[2];
-      const { passwordHash, ...profile } = adminAcc;
-      setUser(profile);
+      await login('e.vance@university.edu', 'studyflow2026');
     } else {
-      const studentAcc = accounts.find((a) => a.role === 'student') || DEFAULT_ACCOUNTS[0];
-      const { passwordHash, ...profile } = studentAcc;
-      setUser(profile);
+      await login('m.lin@university.edu', 'studyflow2026');
     }
-  };
+  }, []);
 
-  const updateUserPreferences = (prefs: Partial<User>) => {
-    setUser((prev) => (prev ? { ...prev, ...prefs } : null));
-    setAccounts((prev) =>
-      prev.map((a) => (a.id === user?.id ? { ...a, ...prefs } : a))
-    );
+  /**
+   * Real API user preference updates persisted to PostgreSQL
+   */
+  const updateUserPreferences = async (prefs: Partial<User>) => {
+    try {
+      const updatedUser = await authService.updatePreferences(prefs);
+      setUser(updatedUser);
+    } catch (err) {
+      // Optimistically retain existing state if network update failed
+      console.error('Failed to persist user preferences:', err);
+      throw err;
+    }
   };
 
   return (
@@ -226,6 +191,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         role: user?.role || 'student',
         isAuthenticated: !!user,
+        isInitializing,
         login,
         register,
         logout,

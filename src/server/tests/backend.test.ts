@@ -432,7 +432,7 @@ async function runTests() {
       const sessionDurationHours = lockedSession.durationMinutes / 60; // 1.5h
       const expectedRemaining = Math.max(0, Math.round((initialRemaining - sessionDurationHours) * 10) / 10); // 2.5h
 
-      await prisma.$transaction(async (tx) => {
+      await prisma.$transaction(async (tx: any) => {
         await tx.studySession.update({
           where: { id: testSessionId },
           data: { status: 'COMPLETED', completed: true, actualMinutesLogged: 90 },
@@ -451,7 +451,7 @@ async function runTests() {
       assert(updatedAgainTask?.remainingHours === 2.5, 'Idempotent completion ensures repeated status update does not subtract remaining time twice');
 
       // Reopening/Cancelling: Transition back to SCHEDULED restores the remaining hours (2.5h -> 4.0h)
-      await prisma.$transaction(async (tx) => {
+      await prisma.$transaction(async (tx: any) => {
         await tx.studySession.update({
           where: { id: testSessionId },
           data: { status: 'SCHEDULED', completed: false },
@@ -481,10 +481,10 @@ async function runTests() {
     try {
       // Calculate progress metrics on Student A before deletion
       const tasks = await prisma.task.findMany({ where: { userId: studentAId } });
-      const completed = tasks.filter((t) => t.status === 'COMPLETED' || t.remainingHours <= 0);
-      const active = tasks.filter((t) => t.status !== 'COMPLETED' && t.remainingHours > 0);
-      const estHours = tasks.reduce((sum, t) => sum + t.estimatedHours, 0);
-      const remHours = tasks.reduce((sum, t) => sum + (t.status === 'COMPLETED' ? 0 : t.remainingHours), 0);
+      const completed = tasks.filter((t: any) => t.status === 'COMPLETED' || t.remainingHours <= 0);
+      const active = tasks.filter((t: any) => t.status !== 'COMPLETED' && t.remainingHours > 0);
+      const estHours = tasks.reduce((sum: number, t: any) => sum + t.estimatedHours, 0);
+      const remHours = tasks.reduce((sum: number, t: any) => sum + (t.status === 'COMPLETED' ? 0 : t.remainingHours), 0);
       const compWorkloadHours = Math.max(0, estHours - remHours);
 
       assert(tasks.length === 1, 'Correctly aggregates total task deliverables');
@@ -556,7 +556,7 @@ async function runTests() {
       // Idempotent Event Syncing: Syncing events generates deadline notification only once
       const existingNotifKeys = new Set(
         (await prisma.academicNotification.findMany({ where: { userId: studentAId } })).map(
-          (n) => `${n.category}:${n.relatedId}`
+          (n: any) => `${n.category}:${n.relatedId}`
         )
       );
       const isAlreadySynced = existingNotifKeys.has(`deadline:${taskAId}`);
@@ -768,7 +768,290 @@ async function runTests() {
       failed++;
     }
 
-    console.log(`\nResults: ${passed} passed, ${failed} failed.`);
+    // 18. Comprehensive Negative & Security Control Integration Suite
+    console.log('\n--- [NEGATIVE INTEGRATION & SECURITY CONTROLS TEST SUITE] ---');
+
+    // Helper to simulate express request/response
+    function createMockRes() {
+      let statusCode = 200;
+      let responseBody: any = null;
+      let headers: Record<string, string> = {};
+      const resObj: any = {
+        status: (code: number) => {
+          statusCode = code;
+          return resObj;
+        },
+        json: (data: any) => {
+          responseBody = data;
+          return resObj;
+        },
+        setHeader: (k: string, v: string) => {
+          headers[k.toLowerCase()] = v;
+        },
+        removeHeader: () => {},
+        end: () => resObj,
+        getStatusCode: () => statusCode,
+        getBody: () => responseBody,
+        getHeaders: () => headers,
+      };
+      return resObj;
+    }
+
+    const { AuthController } = await import('../controllers/authController');
+    const { SubjectController } = await import('../controllers/subjectController');
+    const { TaskController } = await import('../controllers/taskController');
+    const { AvailabilityController } = await import('../controllers/availabilityController');
+    const { ScheduleController } = await import('../controllers/scheduleController');
+    const { AdminController } = await import('../controllers/adminController');
+    const { authenticate, requireRole } = await import('../middleware/auth');
+    const { createAuthRateLimiter, clearRateLimits } = await import('../middleware/security');
+
+    // Test 18.1: Authentication - Rejects short passwords (< 6 chars)
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      await AuthController.register(
+        { body: { email: 'short_pass@university.edu', password: '123', name: 'Test Student' } } as any,
+        res,
+        (err: any) => { capturedError = err; }
+      );
+      assert(capturedError?.statusCode === 400 && capturedError.message.includes('at least 6 characters'), 'Rejects registration with password under 6 characters (400 Bad Request)');
+    } catch (e: any) {
+      console.error('Password length test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.2: Authentication - Rejects excessive passwords (> 128 chars) to protect against bcrypt CPU DoS
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      const longPass = 'A'.repeat(150);
+      await AuthController.register(
+        { body: { email: 'long_pass@university.edu', password: longPass, name: 'Test Student' } } as any,
+        res,
+        (err: any) => { capturedError = err; }
+      );
+      assert(capturedError?.statusCode === 400 && capturedError.message.includes('cannot exceed 128 characters'), 'Rejects registration with password over 128 characters (400 Bad Request)');
+    } catch (e: any) {
+      console.error('Excessive password test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.3: Authentication - Rejects malformed university email format
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      await AuthController.register(
+        { body: { email: 'invalid-email-format', password: 'validPassword2026', name: 'Test Student' } } as any,
+        res,
+        (err: any) => { capturedError = err; }
+      );
+      assert(capturedError?.statusCode === 400 && capturedError.message.includes('email address format'), 'Rejects registration with invalid email format (400 Bad Request)');
+    } catch (e: any) {
+      console.error('Email format test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.4: Authentication - Rejects duplicate university email registration
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      await AuthController.register(
+        { body: { email: 'm.lin@university.edu', password: 'newPassword2026', name: 'Maya Clone' } } as any,
+        res,
+        (err: any) => { capturedError = err; }
+      );
+      assert(capturedError?.statusCode === 409 && capturedError.message.includes('already exists'), 'Rejects duplicate email registration with 409 Conflict');
+    } catch (e: any) {
+      console.error('Duplicate email test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.5: Authentication - Rejects login with wrong password
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      await AuthController.login(
+        { body: { email: 'm.lin@university.edu', password: 'incorrectPassword' } } as any,
+        res,
+        (err: any) => { capturedError = err; }
+      );
+      assert(capturedError?.statusCode === 401 && capturedError.message === 'Invalid email or password', 'Rejects login with invalid credentials without revealing user existence (401 Unauthorized)');
+    } catch (e: any) {
+      console.error('Login wrong password test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.6: Middleware - Rejects missing Authorization header
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      await authenticate({ headers: {} } as any, res, (err: any) => { capturedError = err; });
+      assert(capturedError?.statusCode === 401 && capturedError.message.includes('Bearer token required'), 'Rejects request with missing Bearer token (401 Unauthorized)');
+    } catch (e: any) {
+      console.error('Missing token test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.7: Middleware - Rejects malformed Authorization header
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      await authenticate({ headers: { authorization: 'Basic dXNlcjpwYXNz' } } as any, res, (err: any) => { capturedError = err; });
+      assert(capturedError?.statusCode === 401 && capturedError.message.includes('Bearer token required'), 'Rejects request with non-Bearer auth scheme (401 Unauthorized)');
+    } catch (e: any) {
+      console.error('Malformed auth header test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.8: Middleware - Rejects invalid / tampered JWT token
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      await authenticate({ headers: { authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.badpayload.invalidsig' } } as any, res, (err: any) => { capturedError = err; });
+      assert(capturedError?.statusCode === 401 && capturedError.message.includes('Invalid or expired'), 'Rejects tampered JWT signature with 401 Unauthorized');
+    } catch (e: any) {
+      console.error('Tampered token test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.9: Middleware - Rejects token for deleted / non-existent user
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      const ghostToken = generateToken({
+        userId: 'usr_ghost_deleted_account',
+        email: 'ghost@university.edu',
+        role: 'student',
+        name: 'Ghost User',
+      });
+      await authenticate({ headers: { authorization: `Bearer ${ghostToken}` } } as any, res, (err: any) => { capturedError = err; });
+      assert(capturedError?.statusCode === 401 && capturedError.message.includes('no longer exists'), 'Rejects valid JWT token if user record was deleted from database (401 Unauthorized)');
+    } catch (e: any) {
+      console.error('Deleted user token test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.10: Authorization - Rejects student invoking requireRole('admin')
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      const adminGuard = requireRole('admin');
+      const studentReq: any = {
+        user: { userId: 'usr_student_sample', role: 'student', email: 'stu@university.edu', name: 'Student' },
+      };
+      adminGuard(studentReq, res, (err: any) => { capturedError = err; });
+      assert(capturedError?.statusCode === 403 && capturedError.message.includes('Access denied'), 'Rejects student invoking admin-protected route with 403 Forbidden');
+    } catch (e: any) {
+      console.error('Role guard test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.11: Ownership - Student A cannot attach a task to Student B's course subject
+    try {
+      // Create student A and student B
+      const studentA = await prisma.user.create({
+        data: { email: `neg_student_a_${Date.now()}@university.edu`, passwordHash: 'hash', name: 'Student A', role: 'STUDENT' },
+      });
+      const studentB = await prisma.user.create({
+        data: { email: `neg_student_b_${Date.now()}@university.edu`, passwordHash: 'hash', name: 'Student B', role: 'STUDENT' },
+      });
+      const subjectB = await prisma.subject.create({
+        data: { userId: studentB.id, code: 'BIO 101', name: 'General Biology', credits: 4, colorKey: 'science' },
+      });
+
+      let capturedError: any = null;
+      const res = createMockRes();
+      const mockReqA: any = {
+        user: { userId: studentA.id, email: studentA.email, role: 'student', name: studentA.name },
+        body: {
+          subjectId: subjectB.id, // Student B's subject!
+          title: 'Unauthorized Task Injection',
+          dueDate: new Date(Date.now() + 86400000).toISOString(),
+          estimatedHours: 2.0,
+        },
+      };
+
+      await TaskController.create(mockReqA, res, (err: any) => { capturedError = err; });
+      assert(capturedError?.statusCode === 403 && capturedError.message.includes('does not belong to your account'), 'Rejects student attaching task to another student subject (403 Forbidden)');
+
+      // Clean up test users and subject
+      await prisma.user.delete({ where: { id: studentA.id } });
+      await prisma.user.delete({ where: { id: studentB.id } });
+    } catch (e: any) {
+      console.error('Cross-subject task attachment test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.12: Validation - Boundary validation on study preferences
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      const mockReq: any = {
+        user: { userId: 'usr_student_maya', email: 'm.lin@university.edu', role: 'student', name: 'Maya Lin' },
+        body: { targetDailyStudyCapHours: 25.0 }, // Exceeds max 14.0h limit
+      };
+      await AvailabilityController.updatePreferences(mockReq, res, (err: any) => { capturedError = err; });
+      assert(capturedError?.statusCode === 400 && capturedError.message.includes('must be between 1 and 14'), 'Rejects excessive daily study cap hours (400 Bad Request)');
+    } catch (e: any) {
+      console.error('Study preferences boundary test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.13: Availability - Rejects time intervals where duration < 15 minutes
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      const mockReq: any = {
+        user: { userId: 'usr_student_maya', email: 'm.lin@university.edu', role: 'student', name: 'Maya Lin' },
+        body: { dayOfWeek: 3, startTime: '10:00', endTime: '10:05', type: 'preferred_study' }, // 5 min
+      };
+      await AvailabilityController.create(mockReq, res, (err: any) => { capturedError = err; });
+      assert(capturedError?.statusCode === 400 && capturedError.message.includes('at least 15 minutes'), 'Rejects availability interval shorter than 15 minutes (400 Bad Request)');
+    } catch (e: any) {
+      console.error('Short interval test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.14: Admin Security - Self-demotion safeguard
+    try {
+      let capturedError: any = null;
+      const res = createMockRes();
+      const mockAdminReq: any = {
+        user: { userId: 'usr_admin_elena', email: 'e.vance@university.edu', role: 'admin', name: 'Dr. Elena Vance' },
+        params: { id: 'usr_admin_elena' }, // Trying to demote herself!
+        body: { role: 'student' },
+        ip: '127.0.0.1',
+      };
+      await AdminController.updateUserRole(mockAdminReq, res, (err: any) => { capturedError = err; });
+      assert(capturedError?.statusCode === 403 && capturedError.message.includes('Self-demotion is prohibited'), 'Rejects administrative self-demotion safeguard with 403 Forbidden');
+    } catch (e: any) {
+      console.error('Admin self-demotion test failed:', e.message);
+      failed++;
+    }
+
+    // Test 18.15: Rate Limiting - Enforces rate limiting on authentication attempts
+    try {
+      clearRateLimits();
+      const limiter = createAuthRateLimiter(5, 60000); // 5 requests max
+      const mockReq: any = {
+        headers: { 'x-forwarded-for': '192.168.1.50' },
+        socket: { remoteAddress: '192.168.1.50' },
+      };
+      let lastError: any = null;
+      // Fire 6 requests
+      for (let i = 0; i < 6; i++) {
+        const res = createMockRes();
+        limiter(mockReq, res, (err?: any) => { if (err) lastError = err; });
+      }
+      assert(lastError?.statusCode === 429 && lastError.message.includes('Too many authentication attempts'), 'Enforces authentication rate limiting with 429 Too Many Requests');
+      clearRateLimits();
+    } catch (e: any) {
+      console.error('Rate limiting test failed:', e.message);
+      failed++;
+    }
+
+    console.log(`\nFinal Suite Results: ${passed} passed, ${failed} failed.`);
 
     await disconnectDatabase();
 

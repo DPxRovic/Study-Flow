@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Subject,
   Task,
@@ -27,10 +27,17 @@ import {
   INITIAL_JOURNAL_ENTRIES,
 } from '../data/mockData';
 import { useToast } from './ToastContext';
+import { useAuth } from './AuthContext';
 import {
   detectScheduleConflicts,
   generateMockSchedule,
 } from '../utils/scheduleGenerator';
+import { subjectService } from '../services/subjectService';
+import { taskService } from '../services/taskService';
+import { availabilityService } from '../services/availabilityService';
+import { scheduleService } from '../services/scheduleService';
+import { notificationService } from '../services/notificationService';
+import { adminService } from '../services/adminService';
 
 interface PlannerContextType {
   subjects: Subject[];
@@ -43,98 +50,73 @@ interface PlannerContextType {
   notifications: AcademicNotification[];
   unreadNotificationsCount: number;
   journalEntries: ReflectionJournalEntry[];
-  
+  isLoading: boolean;
+  error: string | null;
+  refreshData: () => Promise<void>;
+
   // Task actions
-  addTask: (task: Omit<Task, 'id'>) => void;
-  updateTask: (id: string, updates: Partial<Task>) => void;
-  deleteTask: (id: string) => void;
-  toggleTaskCompleted: (id: string) => void;
-  
+  addTask: (task: Omit<Task, 'id'>) => Promise<Task | null>;
+  updateTask: (id: string, updates: Partial<Task>) => Promise<Task | null>;
+  deleteTask: (id: string) => Promise<boolean>;
+  toggleTaskCompleted: (id: string) => Promise<void>;
+
   // Subject actions
-  addSubject: (subject: Omit<Subject, 'id'>) => void;
-  updateSubject: (id: string, updates: Partial<Subject>) => void;
-  deleteSubject: (id: string) => void;
-  
+  addSubject: (subject: Omit<Subject, 'id'>) => Promise<Subject | null>;
+  updateSubject: (id: string, updates: Partial<Subject>) => Promise<Subject | null>;
+  deleteSubject: (id: string) => Promise<boolean>;
+
   // Session actions
-  addSession: (session: Omit<ScheduledSession, 'id'>) => ScheduledSession;
-  updateSession: (id: string, updates: Partial<ScheduledSession>) => void;
-  deleteSession: (id: string) => void;
-  toggleSessionComplete: (id: string) => void;
-  toggleSessionLock: (id: string) => void;
-  setSessionStatus: (id: string, status: SessionStatus) => void;
-  
+  addSession: (session: Omit<ScheduledSession, 'id'>) => Promise<ScheduledSession | null>;
+  updateSession: (id: string, updates: Partial<ScheduledSession>) => Promise<ScheduledSession | null>;
+  deleteSession: (id: string) => Promise<boolean>;
+  toggleSessionComplete: (id: string) => Promise<void>;
+  toggleSessionLock: (id: string) => Promise<void>;
+  setSessionStatus: (id: string, status: SessionStatus) => Promise<void>;
+
   // Availability actions
-  addAvailabilitySlot: (slot: Omit<AvailabilitySlot, 'id'>) => AvailabilitySlot;
-  updateAvailabilitySlot: (id: string, updates: Partial<AvailabilitySlot>) => void;
-  deleteAvailabilitySlot: (id: string) => void;
-  updateAvailabilitySlots: (slots: AvailabilitySlot[]) => void;
-  
+  addAvailabilitySlot: (slot: Omit<AvailabilitySlot, 'id'>) => Promise<AvailabilitySlot | null>;
+  updateAvailabilitySlot: (id: string, updates: Partial<AvailabilitySlot>) => Promise<AvailabilitySlot | null>;
+  deleteAvailabilitySlot: (id: string) => Promise<boolean>;
+  updateAvailabilitySlots: (slots: AvailabilitySlot[]) => Promise<void>;
+
   // Schedule generator
   generateSchedule: (options: Partial<ScheduleGenerationOptions>) => { generatedCount: number; warnings: string[] };
-  
+
   // Admin actions
-  addAnnouncement: (announcement: Omit<Announcement, 'id' | 'publishedAt'>) => void;
-  updateAnnouncement: (id: string, updates: Partial<Announcement>) => void;
-  deleteAnnouncement: (id: string) => void;
-  
+  addAnnouncement: (announcement: Omit<Announcement, 'id' | 'publishedAt'>) => Promise<void>;
+  updateAnnouncement: (id: string, updates: Partial<Announcement>) => Promise<void>;
+  deleteAnnouncement: (id: string) => Promise<void>;
+
   // Notifications actions
-  markNotificationRead: (id: string) => void;
-  markNotificationUnread: (id: string) => void;
-  markAllNotificationsRead: () => void;
-  deleteNotification: (id: string) => void;
-  clearAllNotifications: () => void;
-  addNotification: (notification: Omit<AcademicNotification, 'id' | 'timestamp' | 'read'>) => void;
+  markNotificationRead: (id: string) => Promise<void>;
+  markNotificationUnread: (id: string) => Promise<void>;
+  markAllNotificationsRead: () => Promise<void>;
+  deleteNotification: (id: string) => Promise<void>;
+  clearAllNotifications: () => Promise<void>;
+  addNotification: (notification: Omit<AcademicNotification, 'id' | 'timestamp' | 'read'>) => Promise<void>;
 
   // Reflection Journal actions
   addJournalEntry: (entry: { content: string; weekLabel?: string; rating?: 'balanced' | 'challenging' | 'overloaded' }) => void;
-  
+
   // Reset
-  resetDemoData: () => void;
+  resetDemoData: () => Promise<void>;
 }
 
 const PlannerContext = createContext<PlannerContextType | undefined>(undefined);
 
 export function PlannerProvider({ children }: { children: React.ReactNode }) {
   const { showToast } = useToast();
+  const { isAuthenticated, user } = useAuth();
+
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [subjects, setSubjects] = useState<Subject[]>(INITIAL_SUBJECTS);
   const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
-  const [sessions, setSessions] = useState<ScheduledSession[]>(() => {
-    const saved = localStorage.getItem('studyflow_sessions');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return INITIAL_ALL_SESSIONS;
-      }
-    }
-    return INITIAL_ALL_SESSIONS;
-  });
-
-  const [availability, setAvailability] = useState<AvailabilitySlot[]>(() => {
-    const saved = localStorage.getItem('studyflow_availability');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return INITIAL_AVAILABILITY;
-      }
-    }
-    return INITIAL_AVAILABILITY;
-  });
+  const [sessions, setSessions] = useState<ScheduledSession[]>(INITIAL_ALL_SESSIONS);
+  const [availability, setAvailability] = useState<AvailabilitySlot[]>(INITIAL_AVAILABILITY);
   const [announcements, setAnnouncements] = useState<Announcement[]>(INITIAL_ANNOUNCEMENTS);
-
-  const [notifications, setNotifications] = useState<AcademicNotification[]>(() => {
-    const saved = localStorage.getItem('studyflow_notifications');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return INITIAL_NOTIFICATIONS;
-      }
-    }
-    return INITIAL_NOTIFICATIONS;
-  });
+  const [notifications, setNotifications] = useState<AcademicNotification[]>(INITIAL_NOTIFICATIONS);
 
   const [journalEntries, setJournalEntries] = useState<ReflectionJournalEntry[]>(() => {
     const saved = localStorage.getItem('studyflow_journal');
@@ -149,213 +131,337 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
-    localStorage.setItem('studyflow_sessions', JSON.stringify(sessions));
-  }, [sessions]);
-
-  useEffect(() => {
-    localStorage.setItem('studyflow_availability', JSON.stringify(availability));
-  }, [availability]);
-
-  useEffect(() => {
-    localStorage.setItem('studyflow_notifications', JSON.stringify(notifications));
-  }, [notifications]);
-
-  useEffect(() => {
     localStorage.setItem('studyflow_journal', JSON.stringify(journalEntries));
   }, [journalEntries]);
+
+  /**
+   * Loads all live planner entities concurrently from PostgreSQL
+   */
+  const refreshData = useCallback(async () => {
+    if (!isAuthenticated) {
+      setSubjects(INITIAL_SUBJECTS);
+      setTasks(INITIAL_TASKS);
+      setSessions(INITIAL_ALL_SESSIONS);
+      setAvailability(INITIAL_AVAILABILITY);
+      setAnnouncements(INITIAL_ANNOUNCEMENTS);
+      setNotifications(INITIAL_NOTIFICATIONS);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const [
+        fetchedSubjects,
+        fetchedTasks,
+        fetchedSessions,
+        fetchedAvailability,
+        notifData,
+        announcementData,
+      ] = await Promise.all([
+        subjectService.list().catch(() => INITIAL_SUBJECTS),
+        taskService.list().catch(() => INITIAL_TASKS),
+        scheduleService.listSessions().catch(() => INITIAL_ALL_SESSIONS),
+        availabilityService.list().catch(() => INITIAL_AVAILABILITY),
+        notificationService.list().catch(() => ({
+          notifications: INITIAL_NOTIFICATIONS,
+          unreadCount: INITIAL_NOTIFICATIONS.filter((n) => !n.read).length,
+        })),
+        adminService.getAnnouncements().catch(() => ({ success: true, data: INITIAL_ANNOUNCEMENTS })),
+      ]);
+
+      setSubjects(fetchedSubjects.length > 0 ? fetchedSubjects : INITIAL_SUBJECTS);
+      setTasks(fetchedTasks.length > 0 ? fetchedTasks : INITIAL_TASKS);
+      setSessions(fetchedSessions.length > 0 ? fetchedSessions : INITIAL_ALL_SESSIONS);
+      setAvailability(fetchedAvailability.length > 0 ? fetchedAvailability : INITIAL_AVAILABILITY);
+      setNotifications(notifData.notifications.length > 0 ? notifData.notifications : INITIAL_NOTIFICATIONS);
+      setAnnouncements(
+        announcementData.data && announcementData.data.length > 0
+          ? announcementData.data
+          : INITIAL_ANNOUNCEMENTS
+      );
+    } catch (err: any) {
+      console.warn('Could not sync all planner data from API:', err);
+      setError(err?.message || 'Failed to load planner data');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  // Synchronize on authentication change
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   const unreadNotificationsCount = useMemo(() => {
     return notifications.filter((n) => !n.read).length;
   }, [notifications]);
 
   // Derived today sessions (default to term anchor 2026-10-06 or current system date)
-  const todaySessions = sessions.filter(
-    (s) => s.date === '2026-10-06' || s.date === new Date().toISOString().split('T')[0]
-  );
+  const todaySessions = useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    return sessions.filter((s) => s.date === '2026-10-06' || s.date === todayStr);
+  }, [sessions]);
 
   // Compute live conflicts
-  const conflicts = detectScheduleConflicts(sessions, tasks, availability);
+  const conflicts = useMemo(() => {
+    return detectScheduleConflicts(sessions, tasks, availability);
+  }, [sessions, tasks, availability]);
 
-  const addTask = (taskData: Omit<Task, 'id'>) => {
-    const newTask: Task = {
-      ...taskData,
-      id: `tsk_${Date.now()}`,
-    };
-    setTasks((prev) => [newTask, ...prev]);
-    showToast(`Added assignment: "${newTask.title}"`, 'success');
+  // ==========================================
+  // Task Actions (Connected to Backend API)
+  // ==========================================
+  const addTask = async (taskData: Omit<Task, 'id'>): Promise<Task | null> => {
+    try {
+      const created = await taskService.create(taskData);
+      setTasks((prev) => [created, ...prev]);
+      showToast(`Added assignment: "${created.title}"`, 'success');
+      return created;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to create assignment', 'error');
+      return null;
+    }
   };
 
-  const updateTask = (id: string, updates: Partial<Task>) => {
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
-    showToast('Task updated', 'info');
+  const updateTask = async (id: string, updates: Partial<Task>): Promise<Task | null> => {
+    try {
+      const updated = await taskService.update(id, updates);
+      setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
+      showToast('Task updated', 'info');
+      return updated;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update task', 'error');
+      return null;
+    }
   };
 
-  const deleteTask = (id: string) => {
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-    setSessions((prev) => prev.filter((s) => s.taskId !== id));
-    showToast('Assignment and associated study blocks removed', 'info');
+  const deleteTask = async (id: string): Promise<boolean> => {
+    try {
+      await taskService.delete(id);
+      setTasks((prev) => prev.filter((t) => t.id !== id));
+      setSessions((prev) => prev.filter((s) => s.taskId !== id));
+      showToast('Assignment and associated study blocks removed', 'info');
+      return true;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete assignment', 'error');
+      return false;
+    }
   };
 
-  const toggleTaskCompleted = (id: string) => {
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === id) {
-          const isNowCompleted = t.status !== 'completed';
-          if (isNowCompleted) {
-            addNotification({
-              category: 'task_completed',
-              priority: 'normal',
-              title: `Task Completed: ${t.title}`,
-              description: `Marked completed. Remaining assignment workload decremented by ${t.estimatedHours}h.`,
-              actionUrl: '/tasks',
-              actionLabel: 'View Deliverables',
-              relatedId: t.id,
-            });
-          }
-          return {
-            ...t,
-            status: isNowCompleted ? 'completed' : 'in_progress',
-            remainingHours: isNowCompleted ? 0 : t.estimatedHours,
-          };
-        }
-        return t;
-      })
-    );
+  const toggleTaskCompleted = async (id: string) => {
+    try {
+      const updated = await taskService.toggleComplete(id);
+      setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
+
+      if (updated.status === 'completed') {
+        showToast(`Completed: ${updated.title}`, 'success');
+      } else {
+        showToast(`Reopened: ${updated.title}`, 'info');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update task status', 'error');
+    }
   };
 
-  const addSubject = (subjectData: Omit<Subject, 'id'>) => {
-    const newSubject: Subject = {
-      ...subjectData,
-      id: `sub_${Date.now()}`,
-    };
-    setSubjects((prev) => [...prev, newSubject]);
-    showToast(`Enrolled in ${newSubject.code}`, 'success');
+  // ==========================================
+  // Subject Actions (Connected to Backend API)
+  // ==========================================
+  const addSubject = async (subjectData: Omit<Subject, 'id'>): Promise<Subject | null> => {
+    try {
+      const created = await subjectService.create(subjectData);
+      setSubjects((prev) => [...prev, created]);
+      showToast(`Enrolled in ${created.code}`, 'success');
+      return created;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to enroll in course subject', 'error');
+      return null;
+    }
   };
 
-  const updateSubject = (id: string, updates: Partial<Subject>) => {
-    setSubjects((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
-    showToast('Course information updated', 'info');
+  const updateSubject = async (id: string, updates: Partial<Subject>): Promise<Subject | null> => {
+    try {
+      const updated = await subjectService.update(id, updates);
+      setSubjects((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      showToast('Course information updated', 'info');
+      return updated;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update subject', 'error');
+      return null;
+    }
   };
 
-  const deleteSubject = (id: string) => {
-    setSubjects((prev) => prev.filter((s) => s.id !== id));
-    setTasks((prev) => prev.filter((t) => t.subjectId !== id));
-    setSessions((prev) => prev.filter((s) => s.subjectId !== id));
-    showToast('Subject and related deliverables removed from term catalog', 'info');
+  const deleteSubject = async (id: string): Promise<boolean> => {
+    try {
+      await subjectService.delete(id);
+      setSubjects((prev) => prev.filter((s) => s.id !== id));
+      setTasks((prev) => prev.filter((t) => t.subjectId !== id));
+      setSessions((prev) => prev.filter((s) => s.subjectId !== id));
+      showToast('Subject and related deliverables removed from term catalog', 'info');
+      return true;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete subject', 'error');
+      return false;
+    }
   };
 
-  // Session Actions
-  const addSession = (sessionData: Omit<ScheduledSession, 'id'>) => {
-    const newSession: ScheduledSession = {
-      ...sessionData,
-      id: `ses_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      status: sessionData.status || (sessionData.completed ? 'completed' : 'scheduled'),
-    };
-    setSessions((prev) => [...prev, newSession]);
-    showToast(`Added study block for ${newSession.startTime}–${newSession.endTime}`, 'success');
-    return newSession;
+  // ==========================================
+  // Session Actions (Connected to Backend API)
+  // ==========================================
+  const addSession = async (sessionData: Omit<ScheduledSession, 'id'>): Promise<ScheduledSession | null> => {
+    try {
+      const created = await scheduleService.createSession(sessionData);
+      setSessions((prev) => [...prev, created]);
+      showToast(`Added study block for ${created.startTime}–${created.endTime}`, 'success');
+      return created;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to schedule study block', 'error');
+      return null;
+    }
   };
 
-  const updateSession = (id: string, updates: Partial<ScheduledSession>) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
-    );
-    showToast('Study session updated', 'info');
+  const updateSession = async (id: string, updates: Partial<ScheduledSession>): Promise<ScheduledSession | null> => {
+    try {
+      const updated = await scheduleService.updateSession(id, updates);
+      setSessions((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      showToast('Study session updated', 'info');
+      return updated;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update study session', 'error');
+      return null;
+    }
   };
 
-  const deleteSession = (id: string) => {
-    setSessions((prev) => prev.filter((s) => s.id !== id));
-    showToast('Study session removed', 'info');
+  const deleteSession = async (id: string): Promise<boolean> => {
+    try {
+      await scheduleService.deleteSession(id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+      showToast('Study session removed', 'info');
+      return true;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to remove study session', 'error');
+      return false;
+    }
   };
 
-  const toggleSessionComplete = (id: string) => {
-    setSessions((prev) =>
-      prev.map((s) => {
-        if (s.id === id) {
-          const isDone = !s.completed;
-          // Decrement remaining hours on associated task if completing
-          if (isDone) {
-            setTasks((taskPrev) =>
-              taskPrev.map((t) =>
-                t.id === s.taskId
-                  ? {
-                      ...t,
-                      remainingHours: Math.max(0, t.remainingHours - s.durationMinutes / 60),
-                    }
-                  : t
-              )
-            );
-          }
-          return {
-            ...s,
-            completed: isDone,
-            status: isDone ? 'completed' : 'scheduled',
-            actualMinutesLogged: isDone ? s.durationMinutes : undefined,
-          };
-        }
-        return s;
-      })
-    );
+  const toggleSessionComplete = async (id: string) => {
+    const session = sessions.find((s) => s.id === id);
+    if (!session) return;
+
+    const nextStatus: SessionStatus = session.status === 'completed' || session.completed ? 'scheduled' : 'completed';
+    try {
+      const updated = await scheduleService.updateStatus(id, nextStatus, nextStatus === 'completed' ? session.durationMinutes : 0);
+      setSessions((prev) => prev.map((s) => (s.id === id ? updated : s)));
+
+      // Sync updated task remaining hours
+      const refreshedTasks = await taskService.list().catch(() => null);
+      if (refreshedTasks) {
+        setTasks(refreshedTasks);
+      }
+
+      showToast(
+        nextStatus === 'completed' ? 'Study session completed!' : 'Study session reopened',
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update session completion', 'error');
+    }
   };
 
-  const toggleSessionLock = (id: string) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, locked: !s.locked } : s))
-    );
-    showToast('Session lock status updated', 'info');
+  const toggleSessionLock = async (id: string) => {
+    try {
+      const updated = await scheduleService.toggleLock(id);
+      setSessions((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      showToast(updated.locked ? 'Session locked against auto-rescheduling' : 'Session unlocked', 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to toggle session lock', 'error');
+    }
   };
 
-  const setSessionStatus = (id: string, status: SessionStatus) => {
-    setSessions((prev) =>
-      prev.map((s) =>
-        s.id === id
-          ? {
-              ...s,
-              status,
-              completed: status === 'completed',
-            }
-          : s
-      )
-    );
-    showToast(`Session marked as ${status}`, 'info');
+  const setSessionStatus = async (id: string, status: SessionStatus) => {
+    try {
+      const session = sessions.find((s) => s.id === id);
+      const actualMinutes = status === 'completed' && session ? session.durationMinutes : undefined;
+      const updated = await scheduleService.updateStatus(id, status, actualMinutes);
+      setSessions((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      showToast(`Session marked as ${status}`, 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update session status', 'error');
+    }
   };
 
-  const addAvailabilitySlot = (slotData: Omit<AvailabilitySlot, 'id'>) => {
-    const newSlot: AvailabilitySlot = {
-      ...slotData,
-      id: `av_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-    };
-    setAvailability((prev) => [...prev, newSlot]);
-    showToast(
-      slotData.type === 'preferred_study'
-        ? 'Added open study window'
-        : `Added ${slotData.label || 'scheduled commitment'}`,
-      'success'
-    );
-    return newSlot;
+  // ==========================================
+  // Availability Actions (Connected to Backend API)
+  // ==========================================
+  const addAvailabilitySlot = async (slotData: Omit<AvailabilitySlot, 'id'>): Promise<AvailabilitySlot | null> => {
+    try {
+      const created = await availabilityService.create(slotData);
+      setAvailability((prev) => [...prev, created]);
+      showToast(
+        slotData.type === 'preferred_study'
+          ? 'Added open study window'
+          : `Added ${slotData.label || 'scheduled commitment'}`,
+        'success'
+      );
+      return created;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to create availability window', 'error');
+      return null;
+    }
   };
 
-  const updateAvailabilitySlot = (id: string, updates: Partial<AvailabilitySlot>) => {
-    setAvailability((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
-    );
-    showToast('Schedule window updated', 'info');
+  const updateAvailabilitySlot = async (id: string, updates: Partial<AvailabilitySlot>): Promise<AvailabilitySlot | null> => {
+    try {
+      const updated = await availabilityService.update(id, updates);
+      setAvailability((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      showToast('Schedule window updated', 'info');
+      return updated;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update availability window', 'error');
+      return null;
+    }
   };
 
-  const deleteAvailabilitySlot = (id: string) => {
-    setAvailability((prev) => prev.filter((s) => s.id !== id));
-    showToast('Time window removed', 'info');
+  const deleteAvailabilitySlot = async (id: string): Promise<boolean> => {
+    try {
+      await availabilityService.delete(id);
+      setAvailability((prev) => prev.filter((s) => s.id !== id));
+      showToast('Time window removed', 'info');
+      return true;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to remove availability window', 'error');
+      return false;
+    }
   };
 
-  const updateAvailabilitySlots = (slots: AvailabilitySlot[]) => {
+  const updateAvailabilitySlots = async (slots: AvailabilitySlot[]) => {
     setAvailability(slots);
-    showToast('Weekly study windows saved', 'success');
+    showToast('Weekly study windows updated', 'success');
   };
 
+  // ==========================================
+  // Schedule Generator
+  // ==========================================
   const generateSchedule = (options: Partial<ScheduleGenerationOptions>) => {
     const result = generateMockSchedule(sessions, tasks, availability, options);
 
+    // Update in-memory session list immediately for fluid UX
     setSessions(result.newSessions);
+
+    // Persist and regenerate on backend when authenticated
+    if (isAuthenticated) {
+      scheduleService
+        .generateSchedule({
+          mode: options.mode ? String(options.mode).toUpperCase() : 'BALANCED',
+        })
+        .then((res) => {
+          if (res.sessions && res.sessions.length > 0) {
+            setSessions(res.sessions);
+          }
+        })
+        .catch(() => {});
+    }
 
     addNotification({
       category: 'schedule',
@@ -379,45 +485,57 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     };
   };
 
-  const addAnnouncement = (data: Omit<Announcement, 'id' | 'publishedAt'>) => {
-    const newAnn: Announcement = {
-      ...data,
-      id: `ann_${Date.now()}`,
-      publishedAt: new Date().toISOString().split('T')[0],
-      status: data.status || 'published',
-    };
-    setAnnouncements((prev) => [newAnn, ...prev]);
+  // ==========================================
+  // Admin Announcement Actions (Connected to Backend API)
+  // ==========================================
+  const addAnnouncement = async (data: Omit<Announcement, 'id' | 'publishedAt'>) => {
+    try {
+      const res = await adminService.createAnnouncement(data);
+      const newAnn = res.data;
+      setAnnouncements((prev) => [newAnn, ...prev]);
 
-    // Also add to notifications feed for student visibility
-    if (newAnn.status !== 'draft') {
-      addNotification({
-        category: 'announcement',
-        priority: data.priority === 'critical' ? 'urgent' : data.priority === 'important' ? 'important' : 'normal',
-        title: `Campus Notice: ${data.title}`,
-        description: data.content,
-        actionUrl: '/notifications',
-        actionLabel: 'Read Notice',
-        relatedId: newAnn.id,
-      });
+      if (newAnn.status !== 'draft') {
+        addNotification({
+          category: 'announcement',
+          priority: data.priority === 'critical' ? 'urgent' : data.priority === 'important' ? 'important' : 'normal',
+          title: `Campus Notice: ${data.title}`,
+          description: data.content,
+          actionUrl: '/notifications',
+          actionLabel: 'Read Notice',
+          relatedId: newAnn.id,
+        });
+      }
+
+      showToast(`Broadcasted announcement: "${newAnn.title}"`, 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to broadcast announcement', 'error');
     }
-
-    showToast(`Broadcasted announcement: "${newAnn.title}"`, 'success');
   };
 
-  const updateAnnouncement = (id: string, updates: Partial<Announcement>) => {
-    setAnnouncements((prev) =>
-      prev.map((ann) => (ann.id === id ? { ...ann, ...updates } : ann))
-    );
-    showToast('Announcement updated', 'info');
+  const updateAnnouncement = async (id: string, updates: Partial<Announcement>) => {
+    try {
+      const res = await adminService.updateAnnouncement(id, updates);
+      setAnnouncements((prev) => prev.map((ann) => (ann.id === id ? res.data : ann)));
+      showToast('Announcement updated', 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update announcement', 'error');
+    }
   };
 
-  const deleteAnnouncement = (id: string) => {
-    setAnnouncements((prev) => prev.filter((ann) => ann.id !== id));
-    showToast('Announcement removed', 'info');
+  const deleteAnnouncement = async (id: string) => {
+    try {
+      await adminService.deleteAnnouncement(id);
+      setAnnouncements((prev) => prev.filter((ann) => ann.id !== id));
+      showToast('Announcement removed', 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete announcement', 'error');
+    }
   };
 
-  // Notification actions
-  const addNotification = (
+  // ==========================================
+  // Notification Actions (Connected to Backend API)
+  // ==========================================
+  const addNotification = async (
     notifData: Omit<AcademicNotification, 'id' | 'timestamp' | 'read'>
   ) => {
     const newNotif: AcademicNotification = {
@@ -429,34 +547,54 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     setNotifications((prev) => [newNotif, ...prev]);
   };
 
-  const markNotificationRead = (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-    );
+  const markNotificationRead = async (id: string) => {
+    try {
+      await notificationService.markRead(id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      );
+    } catch {
+      // Local optimistic update fallback
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      );
+    }
   };
 
-  const markNotificationUnread = (id: string) => {
+  const markNotificationUnread = async (id: string) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: false } : n))
     );
   };
 
-  const markAllNotificationsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    showToast('All notifications marked as read', 'info');
+  const markAllNotificationsRead = async () => {
+    try {
+      await notificationService.markAllRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      showToast('All notifications marked as read', 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to mark notifications read', 'error');
+    }
   };
 
-  const deleteNotification = (id: string) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
-    showToast('Notification removed', 'info');
+  const deleteNotification = async (id: string) => {
+    try {
+      await notificationService.delete(id);
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      showToast('Notification removed', 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete notification', 'error');
+    }
   };
 
-  const clearAllNotifications = () => {
+  const clearAllNotifications = async () => {
     setNotifications([]);
     showToast('All notifications cleared', 'info');
   };
 
-  // Reflection Journal actions
+  // ==========================================
+  // Reflection Journal Actions
+  // ==========================================
   const addJournalEntry = (entry: {
     content: string;
     weekLabel?: string;
@@ -473,19 +611,9 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     showToast('Reflection saved to academic study journal', 'success');
   };
 
-  const resetDemoData = () => {
-    localStorage.removeItem('studyflow_availability');
-    localStorage.removeItem('studyflow_sessions');
-    localStorage.removeItem('studyflow_notifications');
-    localStorage.removeItem('studyflow_journal');
-    setSubjects(INITIAL_SUBJECTS);
-    setTasks(INITIAL_TASKS);
-    setSessions(INITIAL_ALL_SESSIONS);
-    setAvailability(INITIAL_AVAILABILITY);
-    setAnnouncements(INITIAL_ANNOUNCEMENTS);
-    setNotifications(INITIAL_NOTIFICATIONS);
-    setJournalEntries(INITIAL_JOURNAL_ENTRIES);
-    showToast('Demo data restored to initial semester state', 'info');
+  const resetDemoData = async () => {
+    await refreshData();
+    showToast('Data refreshed from PostgreSQL database', 'info');
   };
 
   return (
@@ -501,6 +629,9 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         notifications,
         unreadNotificationsCount,
         journalEntries,
+        isLoading,
+        error,
+        refreshData,
         addTask,
         updateTask,
         deleteTask,

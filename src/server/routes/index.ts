@@ -15,8 +15,10 @@ import { AdminController } from '../controllers/adminController';
 import { AdminAuditController } from '../controllers/adminAuditController';
 import { authenticate, requireRole } from '../middleware/auth';
 import { checkDatabaseHealth } from '../db/prisma';
+import { createAuthRateLimiter } from '../middleware/security';
 
 const router = Router();
+const authRateLimiter = createAuthRateLimiter(30, 5 * 60 * 1000);
 
 // ==========================================
 // 0. Database & System Health Check
@@ -34,8 +36,8 @@ router.get('/health', async (req, res) => {
 // ==========================================
 // 1. Authentication Routes (Public / Student)
 // ==========================================
-router.post('/auth/register', AuthController.register);
-router.post('/auth/login', AuthController.login);
+router.post('/auth/register', authRateLimiter, AuthController.register);
+router.post('/auth/login', authRateLimiter, AuthController.login);
 router.get('/auth/me', authenticate, AuthController.me);
 router.patch('/auth/preferences', authenticate, AuthController.updatePreferences);
 router.post('/auth/logout', authenticate, AuthController.logout);
@@ -74,6 +76,7 @@ router.delete('/availability/:id', authenticate, AvailabilityController.delete);
 // 5. Student Schedule & Sessions (Protected)
 // ==========================================
 router.get('/schedule', authenticate, ScheduleController.getSchedule);
+router.post('/schedule/generate', authenticate, ScheduleController.generateSchedule);
 router.get('/schedule/sessions', authenticate, ScheduleController.listSessions);
 router.get('/schedule/sessions/:id', authenticate, ScheduleController.getSessionById);
 router.post('/schedule/sessions', authenticate, ScheduleController.createSession);

@@ -169,7 +169,7 @@ export class AdminAuditController {
             curriculum: curriculumCount,
             system: systemCount,
           },
-          topAdmins: topAdmins.map((a) => ({
+          topAdmins: topAdmins.map((a: any) => ({
             name: a.adminName,
             email: a.adminEmail,
             count: a._count.id,

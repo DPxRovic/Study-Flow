@@ -10,6 +10,7 @@ import {
   ScheduleConflict,
   ScheduleGenerationOptions,
 } from '../types';
+import { StudyFlowSchedulerEngine } from '../server/services/scheduler/schedulerEngine';
 
 /**
  * Converts "HH:MM" string to minutes from midnight
@@ -180,16 +181,12 @@ export function detectScheduleConflicts(
 }
 
 /**
- * Temporary deterministic schedule generator.
- *
- * IMPORTANT NOTE FOR ARCHITECTURE:
- * This heuristic generator provides a clean contract for the frontend schedule surface.
- * In Prompt 14, this will be replaced with the full recursive backtracking constraint solver.
+ * Production recursive backtracking schedule generator.
  *
  * INVARIANTS:
  * - Locked sessions (`session.locked === true`) are IMMUTABLE and NEVER overwritten or removed.
  * - Completed sessions are preserved.
- * - New sessions are slotted into available open time windows.
+ * - New sessions are slotted into available open time windows via recursive backtracking constraint search.
  */
 export function generateMockSchedule(
   currentSessions: ScheduledSession[],
@@ -201,143 +198,70 @@ export function generateMockSchedule(
   generatedCount: number;
   warnings: string[];
 } {
+  const startDate = options.startDate || '2026-10-06';
+  const endDate = options.endDate || '2026-10-12';
   const mode = options.mode || 'balanced';
-  const warnings: string[] = [];
 
-  // Keep ALL locked sessions and completed sessions untouched!
-  const preservedSessions = currentSessions.filter(
-    (s) => s.locked === true || s.completed === true
+  const result = StudyFlowSchedulerEngine.generateSchedule(
+    tasks.map((t) => ({
+      id: t.id,
+      userId: t.userId || 'current_user',
+      subjectId: t.subjectId,
+      title: t.title,
+      dueDate: t.dueDate,
+      estimatedHours: t.estimatedHours,
+      remainingHours: t.remainingHours,
+      priority: (t.priority || 'medium').toUpperCase() as any,
+      status: t.status,
+      type: t.type,
+    })),
+    availability.map((a) => ({
+      id: a.id,
+      dayOfWeek: a.dayOfWeek,
+      startTime: a.startTime,
+      endTime: a.endTime,
+      type: (a.type || 'preferred_study').toUpperCase() as any,
+      label: a.label,
+    })),
+    currentSessions.map((s) => ({
+      id: s.id,
+      taskId: s.taskId,
+      subjectId: s.subjectId,
+      date: s.date,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      durationMinutes: s.durationMinutes,
+      completed: s.completed,
+      status: s.status,
+      locked: s.locked,
+      notes: s.notes,
+    })),
+    {
+      startDate,
+      endDate,
+      mode: mode.toUpperCase() as any,
+      targetDailyStudyCapHours: options.dailyStudyCapHours || 6.0,
+      defaultSessionMinutes: mode === 'pomodoro' ? 45 : mode === 'front_loaded' ? 90 : 50,
+      preferredBreakMinutes: 10,
+      bufferMinutes: 15,
+    }
   );
-
-  // Active tasks needing study hours
-  const activeTasks = tasks.filter(
-    (t) => t.status !== 'completed' && t.remainingHours > 0
-  );
-
-  if (activeTasks.length === 0) {
-    return {
-      newSessions: preservedSessions,
-      generatedCount: 0,
-      warnings: ['No pending assignments require scheduled study time.'],
-    };
-  }
-
-  // Days in Fall 2026 Week 7: Oct 6 (Tue) to Oct 11 (Sun)
-  const days = [
-    { date: '2026-10-06', dayOfWeek: 2, label: 'Tuesday' },
-    { date: '2026-10-07', dayOfWeek: 3, label: 'Wednesday' },
-    { date: '2026-10-08', dayOfWeek: 4, label: 'Thursday' },
-    { date: '2026-10-09', dayOfWeek: 5, label: 'Friday' },
-    { date: '2026-10-10', dayOfWeek: 6, label: 'Saturday' },
-    { date: '2026-10-11', dayOfWeek: 0, label: 'Sunday' },
-  ];
-
-  const generatedSessions: ScheduledSession[] = [...preservedSessions];
-  let generatedCount = 0;
-
-  // Track hours allocated per task
-  const allocatedMinutesByTask: Record<string, number> = {};
-  preservedSessions.forEach((s) => {
-    if (s.status !== 'cancelled') {
-      allocatedMinutesByTask[s.taskId] =
-        (allocatedMinutesByTask[s.taskId] || 0) + s.durationMinutes;
-    }
-  });
-
-  // Target block size based on heuristic mode
-  const targetBlockMinutes =
-    mode === 'pomodoro' ? 45 : mode === 'front_loaded' ? 90 : 60;
-
-  days.forEach((day, dayIndex) => {
-    // Collect occupied intervals on this day from preserved sessions
-    const occupiedTimes = generatedSessions
-      .filter((s) => s.date === day.date && s.status !== 'cancelled')
-      .map((s) => ({
-        start: timeToMinutes(s.startTime),
-        end: timeToMinutes(s.endTime),
-      }));
-
-    // Find candidate study hours: 10:00 to 20:00
-    const startHour = mode === 'front_loaded' && dayIndex < 3 ? 9 : 11;
-    let candidateMinute = startHour * 60;
-
-    // Filter tasks with remaining hours to schedule
-    for (const task of activeTasks) {
-      const neededMinutes = Math.round(task.remainingHours * 60);
-      const alreadyAllocated = allocatedMinutesByTask[task.id] || 0;
-      if (alreadyAllocated >= neededMinutes) continue;
-
-      const duration = Math.min(
-        targetBlockMinutes,
-        neededMinutes - alreadyAllocated
-      );
-
-      if (duration < 20) continue;
-
-      // Find non-overlapping gap
-      let proposedStart = candidateMinute;
-      let proposedEnd = proposedStart + duration;
-
-      let hasCollision = occupiedTimes.some(
-        (occ) => proposedStart < occ.end && occ.start < proposedEnd
-      );
-
-      while (hasCollision && proposedStart < 20 * 60) {
-        proposedStart += 30;
-        proposedEnd = proposedStart + duration;
-        hasCollision = occupiedTimes.some(
-          (occ) => proposedStart < occ.end && occ.start < proposedEnd
-        );
-      }
-
-      if (proposedEnd <= 21 * 60) {
-        const newSession: ScheduledSession = {
-          id: `gen_${task.id}_${day.date}_${Date.now()}_${Math.random()
-            .toString(36)
-            .substring(2, 6)}`,
-          taskId: task.id,
-          subjectId: task.subjectId,
-          date: day.date,
-          startTime: minutesToTime(proposedStart),
-          endTime: minutesToTime(proposedEnd),
-          durationMinutes: duration,
-          completed: false,
-          status: 'scheduled',
-          locked: false,
-          notes: `${
-            mode === 'pomodoro'
-              ? '45m Pomodoro sprint'
-              : mode === 'front_loaded'
-              ? 'Front-loaded focus block'
-              : 'Paced study session'
-          }: ${task.title}`,
-        };
-
-        generatedSessions.push(newSession);
-        occupiedTimes.push({ start: proposedStart, end: proposedEnd });
-        allocatedMinutesByTask[task.id] = alreadyAllocated + duration;
-        generatedCount++;
-        candidateMinute = proposedEnd + (mode === 'pomodoro' ? 15 : 30); // buffer
-      }
-    }
-  });
-
-  // Check if any tasks still have unscheduled hours
-  activeTasks.forEach((task) => {
-    const needed = Math.round(task.remainingHours * 60);
-    const scheduled = allocatedMinutesByTask[task.id] || 0;
-    if (scheduled < needed) {
-      warnings.push(
-        `Capacity note: "${task.title}" has ${((needed - scheduled) / 60).toFixed(
-          1
-        )}h unscheduled due to limited open daytime windows.`
-      );
-    }
-  });
 
   return {
-    newSessions: generatedSessions,
-    generatedCount,
-    warnings,
+    newSessions: result.sessions.map((s) => ({
+      id: s.id,
+      taskId: s.taskId,
+      subjectId: s.subjectId,
+      date: s.date,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      durationMinutes: s.durationMinutes,
+      completed: s.completed,
+      status: (s.status ? s.status.toLowerCase() : 'scheduled') as any,
+      locked: s.locked,
+      notes: s.notes,
+    })),
+    generatedCount: result.newSessions.length,
+    warnings: result.warnings,
   };
 }

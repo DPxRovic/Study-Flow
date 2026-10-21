@@ -43,7 +43,7 @@ export class AvailabilityController {
 
       // Group summaries by day for easy scheduler client consumption
       const summaryByDay: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
-      userSlots.forEach((slot) => {
+      userSlots.forEach((slot: any) => {
         const [sh, sm] = slot.startTime.split(':').map(Number);
         const [eh, em] = slot.endTime.split(':').map(Number);
         const duration = eh * 60 + em - (sh * 60 + sm);
@@ -108,7 +108,7 @@ export class AvailabilityController {
       else if (slotType === 'personal') dbSlotType = 'PERSONAL';
 
       // Execute inside Prisma transaction to prevent concurrent race condition overlaps
-      const createdSlot = await prisma.$transaction(async (tx) => {
+      const createdSlot = await prisma.$transaction(async (tx: any) => {
         // Query all existing slots on that day for this student
         const daySlots = await tx.availabilitySlot.findMany({
           where: {
@@ -185,7 +185,7 @@ export class AvailabilityController {
 
       const targetLabel = label !== undefined ? (label ? validateString(label, 'Slot label', 1, 100) : null) : existingSlot.label;
 
-      const updatedSlot = await prisma.$transaction(async (tx) => {
+      const updatedSlot = await prisma.$transaction(async (tx: any) => {
         // Query other slots on the target day for this student
         const daySlots = await tx.availabilitySlot.findMany({
           where: {

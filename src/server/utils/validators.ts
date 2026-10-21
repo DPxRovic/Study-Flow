@@ -102,6 +102,9 @@ export function validatePassword(password: string): string {
   if (password.length < 6) {
     throw ApiError.badRequest('Password must be at least 6 characters long');
   }
+  if (password.length > 128) {
+    throw ApiError.badRequest('Password cannot exceed 128 characters');
+  }
   return password;
 }
 

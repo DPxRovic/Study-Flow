@@ -32,6 +32,7 @@ export function ProgressPage() {
     sessions,
     journalEntries,
     addJournalEntry,
+    refreshData,
   } = usePlanner();
   const { showToast } = useToast();
 
@@ -39,14 +40,18 @@ export function ProgressPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [simulatedError, setSimulatedError] = useState<string | null>(null);
 
-  // Trigger manual recalculate/refresh simulation
-  const handleRefreshAnalytics = () => {
+  // Trigger manual recalculate/refresh from database
+  const handleRefreshAnalytics = async () => {
     setIsLoading(true);
     setSimulatedError(null);
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
+      await refreshData();
       showToast('Pacing analytics synchronized with schedule', 'info');
-    }, 450);
+    } catch {
+      setSimulatedError('Failed to refresh live analytics from server');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Calculations for academic questions

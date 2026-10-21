@@ -39,6 +39,7 @@ export function NotificationsPage() {
     addNotification,
     tasks,
     subjects,
+    refreshData,
   } = usePlanner();
 
   const { showToast } = useToast();
@@ -92,13 +93,17 @@ export function NotificationsPage() {
     deleteNotification(id);
   };
 
-  const handleRefreshFeed = () => {
+  const handleRefreshFeed = async () => {
     setIsLoading(true);
     setSimulatedError(null);
-    setTimeout(() => {
+    try {
+      await refreshData();
+      showToast('Notification feed synchronized with server', 'info');
+    } catch {
+      setSimulatedError('Failed to synchronize notifications');
+    } finally {
       setIsLoading(false);
-      showToast('Notification feed synchronized', 'info');
-    }, 400);
+    }
   };
 
   // Helper to generate a realistic academic alert for verification

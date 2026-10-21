@@ -59,54 +59,46 @@ export class ProgressController {
       // 1. Task Completion Breakdown
       // Definition: A deliverable is 'completed' if task.status === 'COMPLETED' or remainingHours === 0.
       const totalTasks = tasks.length;
-      const completedTasks = tasks.filter((t) => t.status === 'COMPLETED' || t.remainingHours <= 0);
-      const activeTasks = tasks.filter((t) => t.status !== 'COMPLETED' && t.remainingHours > 0);
+      const completedTasks = tasks.filter((t: any) => t.status === 'COMPLETED' || t.remainingHours <= 0);
+      const activeTasks = tasks.filter((t: any) => t.status !== 'COMPLETED' && t.remainingHours > 0);
       const completionPercentage = totalTasks > 0 ? Math.round((completedTasks.length / totalTasks) * 100) : 0;
 
       // 2. Workload Hours Analysis
-      // Definition:
-      // - estimatedHours: Sum of all initial estimated study hours across tasks
-      // - remainingHours: Active study hours still required to finish pending deliverables
-      // - completedHours: Difference between estimatedHours and remainingHours (non-negative)
-      const totalEstimatedHours = Math.round(tasks.reduce((sum, t) => sum + t.estimatedHours, 0) * 10) / 10;
-      const totalRemainingHours = Math.round(tasks.reduce((sum, t) => sum + (t.status === 'COMPLETED' ? 0 : t.remainingHours), 0) * 10) / 10;
+      const totalEstimatedHours = Math.round(tasks.reduce((sum: number, t: any) => sum + t.estimatedHours, 0) * 10) / 10;
+      const totalRemainingHours = Math.round(tasks.reduce((sum: number, t: any) => sum + (t.status === 'COMPLETED' ? 0 : t.remainingHours), 0) * 10) / 10;
       const totalCompletedWorkloadHours = Math.max(0, Math.round((totalEstimatedHours - totalRemainingHours) * 10) / 10);
 
       // 3. Study Session Metrics
-      // Definition:
-      // - totalScheduledSessions: All active study blocks in planning window
-      // - completedSessions: Sessions marked COMPLETED
-      // - loggedMinutes: Total actual minutes logged in completed sessions (or session duration if loggedMinutes not specified)
-      const validSessions = sessions.filter((s) => s.status !== 'CANCELLED');
+      const validSessions = sessions.filter((s: any) => s.status !== 'CANCELLED');
       const totalSessionsCount = validSessions.length;
-      const completedSessionsList = validSessions.filter((s) => s.completed || s.status === 'COMPLETED');
-      const outstandingSessionsList = validSessions.filter((s) => !s.completed && s.status === 'SCHEDULED');
-      const missedSessionsList = validSessions.filter((s) => s.status === 'MISSED');
+      const completedSessionsList = validSessions.filter((s: any) => s.completed || s.status === 'COMPLETED');
+      const outstandingSessionsList = validSessions.filter((s: any) => !s.completed && s.status === 'SCHEDULED');
+      const missedSessionsList = validSessions.filter((s: any) => s.status === 'MISSED');
 
-      const loggedMinutes = completedSessionsList.reduce((acc, s) => {
+      const loggedMinutes = completedSessionsList.reduce((acc: number, s: any) => {
         return acc + (s.actualMinutesLogged !== null && s.actualMinutesLogged !== undefined ? s.actualMinutesLogged : s.durationMinutes);
       }, 0);
       const loggedHours = Math.round((loggedMinutes / 60) * 10) / 10;
 
       // 4. Subject-by-Subject Workload Status
-      const subjectWorkload = subjects.map((sub) => {
-        const subTasks = tasks.filter((t) => t.subjectId === sub.id);
-        const subSessions = validSessions.filter((s) => s.subjectId === sub.id);
+      const subjectWorkload = subjects.map((sub: any) => {
+        const subTasks = tasks.filter((t: any) => t.subjectId === sub.id);
+        const subSessions = validSessions.filter((s: any) => s.subjectId === sub.id);
 
         const subTotalTasks = subTasks.length;
-        const subCompletedTasks = subTasks.filter((t) => t.status === 'COMPLETED' || t.remainingHours <= 0).length;
+        const subCompletedTasks = subTasks.filter((t: any) => t.status === 'COMPLETED' || t.remainingHours <= 0).length;
         const subRemainingTasks = subTotalTasks - subCompletedTasks;
 
-        const subEstimatedHours = Math.round(subTasks.reduce((acc, t) => acc + t.estimatedHours, 0) * 10) / 10;
-        const subRemainingHours = Math.round(subTasks.reduce((acc, t) => acc + (t.status === 'COMPLETED' ? 0 : t.remainingHours), 0) * 10) / 10;
+        const subEstimatedHours = Math.round(subTasks.reduce((acc: number, t: any) => acc + t.estimatedHours, 0) * 10) / 10;
+        const subRemainingHours = Math.round(subTasks.reduce((acc: number, t: any) => acc + (t.status === 'COMPLETED' ? 0 : t.remainingHours), 0) * 10) / 10;
         const subCompletedHours = Math.max(0, Math.round((subEstimatedHours - subRemainingHours) * 10) / 10);
 
-        const subScheduledMinutes = subSessions.reduce((acc, s) => acc + s.durationMinutes, 0);
+        const subScheduledMinutes = subSessions.reduce((acc: number, s: any) => acc + s.durationMinutes, 0);
         const subScheduledHours = Math.round((subScheduledMinutes / 60) * 10) / 10;
 
         const subLoggedMinutes = subSessions
-          .filter((s) => s.completed || s.status === 'COMPLETED')
-          .reduce((acc, s) => acc + (s.actualMinutesLogged || s.durationMinutes), 0);
+          .filter((s: any) => s.completed || s.status === 'COMPLETED')
+          .reduce((acc: number, s: any) => acc + (s.actualMinutesLogged || s.durationMinutes), 0);
         const subLoggedHours = Math.round((subLoggedMinutes / 60) * 10) / 10;
 
         // Attention heuristic:
@@ -115,7 +107,7 @@ export class ProgressController {
         let attentionReason = 'On track with weekly pace';
 
         const now = new Date();
-        const hasOverdue = subTasks.some((t) => t.status !== 'COMPLETED' && new Date(t.dueDate) < now);
+        const hasOverdue = subTasks.some((t: any) => t.status !== 'COMPLETED' && new Date(t.dueDate) < now);
 
         if (hasOverdue) {
           attentionLevel = 'needs_attention';
@@ -154,11 +146,11 @@ export class ProgressController {
       const now = new Date();
       const next7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       const imminentDeadlines = activeTasks
-        .filter((t) => {
+        .filter((t: any) => {
           const due = new Date(t.dueDate);
           return due >= now && due <= next7Days;
         })
-        .map((t) => ({
+        .map((t: any) => ({
           id: t.id,
           title: t.title,
           dueDate: t.dueDate,
@@ -169,8 +161,8 @@ export class ProgressController {
 
       // Overdue deliverables (Due date in past, not completed)
       const overdueDeliverables = activeTasks
-        .filter((t) => new Date(t.dueDate) < now)
-        .map((t) => ({
+        .filter((t: any) => new Date(t.dueDate) < now)
+        .map((t: any) => ({
           id: t.id,
           title: t.title,
           dueDate: t.dueDate,

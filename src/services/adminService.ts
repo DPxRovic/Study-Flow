@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { apiClient } from './apiClient';
 import { AuditLogRecord, DirectoryUser, Announcement, CatalogCourse } from '../types';
 
 export interface AuditLogQueryParams {
@@ -78,64 +79,6 @@ export interface AdminMetricsResponse {
   };
 }
 
-/**
- * Retrieves or establishes an authenticated session token for administrative requests.
- */
-async function getAdminToken(): Promise<string> {
-  const existingToken = localStorage.getItem('studyflow_token');
-  if (existingToken) return existingToken;
-
-  // Auto-authenticate as default administrator Elena Vance if token is missing
-  try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: 'e.vance@university.edu',
-        password: 'studyflow2026',
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.token) {
-        localStorage.setItem('studyflow_token', data.token);
-        return data.token;
-      }
-    }
-  } catch (err) {
-    console.warn('[adminService] Token bootstrap warning:', err);
-  }
-  return '';
-}
-
-/**
- * Universal authenticated API fetcher with token injection and error handling.
- */
-async function adminFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getAdminToken();
-  const headers = new Headers(options.headers || {});
-  if (!headers.has('Content-Type') && options.body && typeof options.body === 'string') {
-    headers.set('Content-Type', 'application/json');
-  }
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-
-  const response = await fetch(endpoint, {
-    ...options,
-    headers,
-  });
-
-  const json = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    const errorMessage = json?.error?.message || json?.message || `HTTP error ${response.status}`;
-    throw new Error(errorMessage);
-  }
-
-  return json as T;
-}
-
 export const adminService = {
   /**
    * Retrieves paginated audit logs with search and category filters.
@@ -154,28 +97,28 @@ export const adminService = {
     if (params.order) query.set('order', params.order);
 
     const queryString = query.toString();
-    return adminFetch<PaginatedAuditResponse>(`/api/admin/audit-logs${queryString ? `?${queryString}` : ''}`);
+    return apiClient.get<PaginatedAuditResponse>(`/admin/audit-logs${queryString ? `?${queryString}` : ''}`);
   },
 
   /**
    * Retrieves summary statistics for audit activity.
    */
   async getAuditStats(): Promise<AuditStatsResponse> {
-    return adminFetch<AuditStatsResponse>('/api/admin/audit-logs/stats');
+    return apiClient.get<AuditStatsResponse>('/admin/audit-logs/stats');
   },
 
   /**
    * Retrieves a single audit record by its unique ID.
    */
   async getAuditLogById(id: string): Promise<{ success: boolean; data: AuditLogRecord }> {
-    return adminFetch<{ success: boolean; data: AuditLogRecord }>(`/api/admin/audit-logs/${id}`);
+    return apiClient.get<{ success: boolean; data: AuditLogRecord }>(`/admin/audit-logs/${id}`);
   },
 
   /**
    * Retrieves institutional analytics computed from real PostgreSQL records.
    */
   async getMetrics(): Promise<AdminMetricsResponse> {
-    return adminFetch<AdminMetricsResponse>('/api/admin/metrics');
+    return apiClient.get<AdminMetricsResponse>('/admin/metrics');
   },
 
   /**
@@ -189,8 +132,8 @@ export const adminService = {
     if (params.limit) query.set('limit', String(params.limit));
 
     const queryString = query.toString();
-    return adminFetch<{ success: boolean; data: DirectoryUser[]; meta: any }>(
-      `/api/admin/users${queryString ? `?${queryString}` : ''}`
+    return apiClient.get<{ success: boolean; data: DirectoryUser[]; meta: any }>(
+      `/admin/users${queryString ? `?${queryString}` : ''}`
     );
   },
 
@@ -198,12 +141,9 @@ export const adminService = {
    * Updates user role with server-side last-admin safeguard and automatic audit logging.
    */
   async updateUserRole(userId: string, role: string) {
-    return adminFetch<{ success: boolean; message: string; data: any }>(
-      `/api/admin/users/${userId}/role`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify({ role }),
-      }
+    return apiClient.patch<{ success: boolean; message: string; data: any }>(
+      `/admin/users/${userId}/role`,
+      { role }
     );
   },
 
@@ -211,12 +151,9 @@ export const adminService = {
    * Updates user status/term/major with automatic audit logging.
    */
   async updateUserStatus(userId: string, data: { term?: string; major?: string }) {
-    return adminFetch<{ success: boolean; message: string; data: any }>(
-      `/api/admin/users/${userId}/status`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      }
+    return apiClient.patch<{ success: boolean; message: string; data: any }>(
+      `/admin/users/${userId}/status`,
+      data
     );
   },
 
@@ -224,19 +161,16 @@ export const adminService = {
    * Retrieves all institutional announcements.
    */
   async getAnnouncements(): Promise<{ success: boolean; data: Announcement[] }> {
-    return adminFetch<{ success: boolean; data: Announcement[] }>('/api/admin/announcements');
+    return apiClient.get<{ success: boolean; data: Announcement[] }>('/admin/announcements');
   },
 
   /**
    * Broadcasts a new campus announcement and generates an audit log record.
    */
   async createAnnouncement(data: Partial<Announcement>) {
-    return adminFetch<{ success: boolean; message: string; data: Announcement }>(
-      '/api/admin/announcements',
-      {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }
+    return apiClient.post<{ success: boolean; message: string; data: Announcement }>(
+      '/admin/announcements',
+      data
     );
   },
 
@@ -244,12 +178,9 @@ export const adminService = {
    * Updates an existing announcement with audit logging.
    */
   async updateAnnouncement(id: string, data: Partial<Announcement>) {
-    return adminFetch<{ success: boolean; message: string; data: Announcement }>(
-      `/api/admin/announcements/${id}`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      }
+    return apiClient.patch<{ success: boolean; message: string; data: Announcement }>(
+      `/admin/announcements/${id}`,
+      data
     );
   },
 
@@ -257,11 +188,8 @@ export const adminService = {
    * Deletes an announcement with audit logging.
    */
   async deleteAnnouncement(id: string) {
-    return adminFetch<{ success: boolean; message: string }>(
-      `/api/admin/announcements/${id}`,
-      {
-        method: 'DELETE',
-      }
+    return apiClient.delete<{ success: boolean; message: string }>(
+      `/admin/announcements/${id}`
     );
   },
 
@@ -269,6 +197,13 @@ export const adminService = {
    * Retrieves master curriculum catalog from PostgreSQL.
    */
   async getCatalog(): Promise<{ success: boolean; data: CatalogCourse[]; meta: any }> {
-    return adminFetch<{ success: boolean; data: CatalogCourse[]; meta: any }>('/api/admin/catalog');
+    return apiClient.get<{ success: boolean; data: CatalogCourse[]; meta: any }>('/admin/catalog');
+  },
+
+  /**
+   * Retrieves server and database health status.
+   */
+  async getHealth(): Promise<{ status: string; timestamp: string; database: { ok: boolean; latencyMs: number } }> {
+    return apiClient.get('/health');
   },
 };

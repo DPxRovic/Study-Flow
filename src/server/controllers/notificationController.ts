@@ -174,7 +174,7 @@ export class NotificationController {
         }),
       ]);
 
-      const existingSet = new Set(existingNotifs.map((n) => `${n.category}:${n.relatedId}`));
+      const existingSet = new Set(existingNotifs.map((n: any) => `${n.category}:${n.relatedId}`));
       const newNotificationsToCreate: any[] = [];
 
       // 1. Check for approaching deadlines (due within 48h)

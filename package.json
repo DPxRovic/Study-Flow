@@ -14,7 +14,9 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:validate": "prisma validate",
-    "test:backend": "tsx src/server/tests/backend.test.ts"
+    "test:backend": "tsx src/server/tests/backend.test.ts",
+    "test:integration": "tsx src/server/tests/integration.test.ts",
+    "test": "tsx src/server/tests/backend.test.ts && tsx src/server/tests/integration.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

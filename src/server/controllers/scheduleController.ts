@@ -15,6 +15,7 @@ import {
   validateString,
   validateNumber,
 } from '../utils/validators';
+import { StudyFlowSchedulerEngine } from '../services/scheduler/schedulerEngine';
 
 function intervalsOverlap(startA: string, endA: string, startB: string, endB: string): boolean {
   return startA < endB && startB < endA;
@@ -87,7 +88,7 @@ export class ScheduleController {
       });
 
       // Find unscheduled tasks (tasks not completed that have remaining hours but zero future sessions)
-      const scheduledTaskIds = new Set(sessions.map((s) => s.taskId));
+      const scheduledTaskIds = new Set(sessions.map((s: any) => s.taskId));
       const unscheduledTasks = await prisma.task.findMany({
         where: {
           userId,
@@ -105,7 +106,7 @@ export class ScheduleController {
 
       // Group sessions by date
       const sessionsByDate: Record<string, typeof sessions> = {};
-      sessions.forEach((s) => {
+      sessions.forEach((s: any) => {
         if (!sessionsByDate[s.date]) sessionsByDate[s.date] = [];
         sessionsByDate[s.date].push(s);
       });
@@ -123,9 +124,9 @@ export class ScheduleController {
           unscheduledTasks,
           summary: {
             totalSessions: sessions.length,
-            completedSessions: sessions.filter((s) => s.completed || s.status === 'COMPLETED').length,
-            lockedSessions: sessions.filter((s) => s.locked).length,
-            totalMinutesScheduled: sessions.reduce((acc, s) => acc + s.durationMinutes, 0),
+            completedSessions: sessions.filter((s: any) => s.completed || s.status === 'COMPLETED').length,
+            lockedSessions: sessions.filter((s: any) => s.locked).length,
+            totalMinutesScheduled: sessions.reduce((acc: number, s: any) => acc + s.durationMinutes, 0),
           },
         },
       });
@@ -253,7 +254,7 @@ export class ScheduleController {
       }
 
       // Concurrency-safe overlap check and creation inside transaction
-      const newSession = await prisma.$transaction(async (tx) => {
+      const newSession = await prisma.$transaction(async (tx: any) => {
         const existingSessions = await tx.studySession.findMany({
           where: {
             userId,
@@ -340,7 +341,7 @@ export class ScheduleController {
       const targetLocked = locked !== undefined ? Boolean(locked) : session.locked;
       const targetNotes = notes !== undefined ? (notes ? validateString(notes, 'Notes', 0, 1000) : null) : session.notes;
 
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await prisma.$transaction(async (tx: any) => {
         // Overlap verification
         const otherSessions = await tx.studySession.findMany({
           where: {
@@ -450,7 +451,7 @@ export class ScheduleController {
       }
 
       // Execute status transition and task remaining workload adjustment inside an atomic transaction
-      const result = await prisma.$transaction(async (tx) => {
+      const result = await prisma.$transaction(async (tx: any) => {
         const previousStatus = session.status;
         const sessionHours = session.durationMinutes / 60;
 
@@ -548,6 +549,272 @@ export class ScheduleController {
       res.json({
         success: true,
         message: 'Study block removed from schedule',
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  // POST /api/schedule/generate
+  // Invokes the recursive backtracking constraint scheduler, validates hard constraints,
+  // atomically replaces unlocked sessions, and returns persisted sessions and unscheduled task diagnostics.
+  static async generateSchedule(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.userId;
+      const {
+        startDate,
+        endDate,
+        mode,
+        targetDailyStudyCapHours,
+        defaultSessionMinutes,
+        preferredBreakMinutes,
+        bufferMinutes,
+        preferredStudyTime,
+        searchBudgetSteps,
+        searchTimeoutMs,
+      } = req.body || {};
+
+      // 1. Date normalization & validation
+      const todayStr = new Date().toISOString().split('T')[0];
+      const startStr = startDate ? validateDateFormat(String(startDate), 'Start date') : todayStr;
+
+      let endStr: string;
+      if (endDate) {
+        endStr = validateDateFormat(String(endDate), 'End date');
+      } else {
+        const d = new Date(startStr);
+        d.setDate(d.getDate() + 7);
+        endStr = d.toISOString().split('T')[0];
+      }
+
+      const startMs = new Date(startStr).getTime();
+      const endMs = new Date(endStr).getTime();
+      const diffDays = Math.ceil((endMs - startMs) / (1000 * 60 * 60 * 24));
+
+      if (diffDays < 0) {
+        throw ApiError.badRequest('End date must be on or after start date');
+      }
+      if (diffDays > 60) {
+        throw ApiError.badRequest('Scheduling horizon cannot exceed 60 days');
+      }
+
+      // 2. Mode validation
+      const normalizedMode = mode ? String(mode).toUpperCase() : 'BALANCED';
+      if (!['BALANCED', 'FRONT_LOADED', 'POMODORO'].includes(normalizedMode)) {
+        throw ApiError.badRequest('Invalid schedule mode. Must be BALANCED, FRONT_LOADED, or POMODORO');
+      }
+
+      // 3. Load authenticated student's user profile & preferences
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+      if (!user) {
+        throw ApiError.notFound('User profile not found');
+      }
+
+      const effectiveDailyCap = targetDailyStudyCapHours !== undefined
+        ? validateNumber(targetDailyStudyCapHours, 'Daily study cap', 0.5, 16)
+        : user.targetDailyStudyCapHours;
+
+      const effectiveSessionMinutes = defaultSessionMinutes !== undefined
+        ? Math.round(validateNumber(defaultSessionMinutes, 'Default session minutes', 15, 240))
+        : user.defaultSessionMinutes;
+
+      const effectiveBreakMinutes = preferredBreakMinutes !== undefined
+        ? Math.round(validateNumber(preferredBreakMinutes, 'Preferred break minutes', 0, 60))
+        : user.preferredBreakMinutes;
+
+      const effectiveBufferMinutes = bufferMinutes !== undefined
+        ? Math.round(validateNumber(bufferMinutes, 'Buffer minutes', 0, 60))
+        : user.bufferMinutes;
+
+      const effectiveStudyTime = preferredStudyTime !== undefined
+        ? (preferredStudyTime ? String(preferredStudyTime).toLowerCase() : undefined)
+        : (user.preferredStudyTime ? String(user.preferredStudyTime).toLowerCase() : undefined);
+
+      // 4. Load student's active tasks (status != COMPLETED, remainingHours > 0)
+      const tasks = await prisma.task.findMany({
+        where: {
+          userId,
+          status: { not: 'COMPLETED' },
+          remainingHours: { gt: 0 },
+        },
+        include: {
+          subject: {
+            select: { id: true, code: true, name: true, colorKey: true },
+          },
+        },
+        orderBy: { dueDate: 'asc' },
+      });
+
+      // 5. Load student's weekly availability slots
+      const availabilitySlots = await prisma.availabilitySlot.findMany({
+        where: { userId },
+        orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+      });
+
+      // 6. Load existing sessions in scheduling horizon
+      const existingSessions = await prisma.studySession.findMany({
+        where: {
+          userId,
+          date: { gte: startStr, lte: endStr },
+        },
+        orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+      });
+
+      // 7. Invoke the Recursive Backtracking Scheduling Engine
+      const engineResult = StudyFlowSchedulerEngine.generateSchedule(
+        tasks.map((t: any) => ({
+          id: t.id,
+          userId: t.userId,
+          subjectId: t.subjectId,
+          title: t.title,
+          dueDate: t.dueDate,
+          estimatedHours: t.estimatedHours,
+          remainingHours: t.remainingHours,
+          priority: t.priority as any,
+          status: t.status,
+          type: t.type,
+        })),
+        availabilitySlots.map((a: any) => ({
+          id: a.id,
+          userId: a.userId,
+          dayOfWeek: a.dayOfWeek,
+          startTime: a.startTime,
+          endTime: a.endTime,
+          type: a.type as any,
+          label: a.label,
+        })),
+        existingSessions.map((s: any) => ({
+          id: s.id,
+          userId: s.userId,
+          taskId: s.taskId,
+          subjectId: s.subjectId,
+          date: s.date,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          durationMinutes: s.durationMinutes,
+          completed: s.completed,
+          status: s.status,
+          locked: s.locked,
+          notes: s.notes,
+        })),
+        {
+          startDate: startStr,
+          endDate: endStr,
+          mode: normalizedMode as any,
+          targetDailyStudyCapHours: effectiveDailyCap,
+          defaultSessionMinutes: effectiveSessionMinutes,
+          preferredBreakMinutes: effectiveBreakMinutes,
+          bufferMinutes: effectiveBufferMinutes,
+          preferredStudyTime: effectiveStudyTime as any,
+          searchBudgetSteps: searchBudgetSteps ? Math.round(Number(searchBudgetSteps)) : 25000,
+          searchTimeoutMs: searchTimeoutMs ? Math.round(Number(searchTimeoutMs)) : 4000,
+        }
+      );
+
+      // 8. Safe Transactional Persistence:
+      // Invariant: Locked sessions and completed sessions are NEVER modified or deleted.
+      // Invariant: Unlocked sessions within the horizon are replaced with the newly generated schedule.
+      const persistedSessions = await prisma.$transaction(async (tx: any) => {
+        // Fetch current locked and completed sessions in range
+        const protectedSessions = await tx.studySession.findMany({
+          where: {
+            userId,
+            date: { gte: startStr, lte: endStr },
+            OR: [{ locked: true }, { completed: true }, { status: 'COMPLETED' }],
+          },
+        });
+
+        // Double-check: verify that no newly generated session overlaps any protected session
+        for (const gen of engineResult.newSessions) {
+          for (const prot of protectedSessions) {
+            if (gen.date === prot.date) {
+              if (intervalsOverlap(gen.startTime, gen.endTime, prot.startTime, prot.endTime)) {
+                throw ApiError.conflict(
+                  `Integrity violation: Generated study block for task ${gen.taskId} (${gen.startTime} - ${gen.endTime}) overlaps protected session (${prot.startTime} - ${prot.endTime}) on ${gen.date}`
+                );
+              }
+            }
+          }
+        }
+
+        // Atomically delete only unlocked, non-completed sessions within the horizon
+        await tx.studySession.deleteMany({
+          where: {
+            userId,
+            date: { gte: startStr, lte: endStr },
+            locked: false,
+            completed: false,
+            status: { not: 'COMPLETED' },
+          },
+        });
+
+        // Atomically insert the newly generated study blocks
+        if (engineResult.newSessions.length > 0) {
+          await tx.studySession.createMany({
+            data: engineResult.newSessions.map((s: any) => ({
+              userId,
+              taskId: s.taskId,
+              subjectId: s.subjectId,
+              date: s.date,
+              startTime: s.startTime,
+              endTime: s.endTime,
+              durationMinutes: s.durationMinutes,
+              completed: false,
+              locked: false,
+              status: 'SCHEDULED',
+              notes: s.notes || null,
+            })),
+          });
+        }
+
+        // Return all sessions in the horizon (both preserved and newly created)
+        return tx.studySession.findMany({
+          where: {
+            userId,
+            date: { gte: startStr, lte: endStr },
+          },
+          include: {
+            task: {
+              select: {
+                id: true,
+                title: true,
+                priority: true,
+                status: true,
+                dueDate: true,
+                remainingHours: true,
+              },
+            },
+            subject: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                colorKey: true,
+              },
+            },
+          },
+          orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+        });
+      });
+
+      res.status(200).json({
+        success: true,
+        message: `Schedule generated successfully: ${engineResult.newSessions.length} sessions allocated (${engineResult.preservedSessions.length} locked/completed blocks preserved)`,
+        data: {
+          dateRange: {
+            startDate: startStr,
+            endDate: endStr,
+            totalDays: diffDays + 1,
+          },
+          sessions: persistedSessions,
+          generatedCount: engineResult.newSessions.length,
+          preservedCount: engineResult.preservedSessions.length,
+          unscheduledTasks: engineResult.unscheduledTasks,
+          warnings: engineResult.warnings,
+          summary: engineResult.summary,
+        },
       });
     } catch (err) {
       next(err);

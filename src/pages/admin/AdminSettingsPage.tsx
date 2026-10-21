@@ -59,7 +59,7 @@ export function AdminSettingsPage() {
     try {
       const [res, healthRes] = await Promise.all([
         adminService.getAuditLogs({ limit: 5, order: 'desc' }),
-        fetch('/api/health').then((r) => r.json()).catch(() => null),
+        adminService.getHealth().catch(() => null),
       ]);
 
       if (res && res.success) {

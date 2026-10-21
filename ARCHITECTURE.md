@@ -290,37 +290,56 @@ Each academic discipline receives a vibrant, dedicated palette for instant recog
 
 ## 6. Scheduling Engine Architecture
 
-The StudyFlow scheduler is a **deterministic, fatigue-aware greedy knapsack algorithm with interval spreading** (Anti-Cram Engine).
+The StudyFlow scheduler is an exact **Recursive Backtracking Constraint Satisfaction Problem (CSP) Solver with Heuristic Guidance and Forward-Checking Pruning** located at `src/server/services/scheduler/schedulerEngine.ts` and connected via `POST /api/schedule/generate`.
 
 ```
 Task Inventory (due date, remaining hours, priority)
        ↓
-Availability Windows (open study slots per day of week)
+Work Item Decomposition (Task Splitting into 25m–120m chunks)
        ↓
-Locked Historical Sessions (cannot be modified)
+Heuristic Ordering (Earliest Deadline First + Priority Weighting + First-Fit Decreasing)
        ↓
-Candidate Time Slot Generator
+Availability Windows & Busy Commitments (Subtract CLASS/WORK/PERSONAL from PREFERRED_STUDY)
        ↓
-Anti-Cram Spreader (limits single-day task allocation)
+Locked & Completed Sessions (Immutable occupied time anchors)
        ↓
-Fatigue Checker (max 90m per session + 15m break + daily study cap)
+Candidate Slot Generator (30m stepping within free windows before deadline)
        ↓
-Conflict Detector (flags shortages when required hours > available capacity)
+Recursive Backtracking Search:
+  - Base case: All work items placed -> SUCCESS
+  - Pruning: Forward-checking remaining capacity before deadline < needed work
+  - Branching: Iterate through candidate slots scored by Mode & Time preferences
+  - Apply Candidate: Push session, record interval in occupiedByDate, increment dailyMinutes
+  - Recursive Call: solve(itemIndex + 1)
+  - Backtrack: Pop session, remove interval, restore dailyMinutes, increment backtrackCount
        ↓
-Generated Sessions + Unscheduled Task Warnings
+Safe Transactional Persistence (Delete unlocked sessions, insert new sessions, preserve locked)
+       ↓
+Structured Result (Sessions + Unscheduled Deliverables with Root-Cause Diagnostics)
 ```
 
-### Four Invariant Rules of the Scheduling Algorithm:
-1. **Rule 1 (Anti-Cram)**: A task requiring 6 hours due in 4 days is capped at $\le 2\text{ hours/day}$ so it spreads over 3+ days instead of cramming the night before.
-2. **Rule 2 (Fatigue Limit)**: Session chunks are bounded to $45\text{m}$–$90\text{m}$ with mandatory rest intervals.
-3. **Rule 3 (Daily Study Cap)**: Total daily study hours cannot exceed the student's `targetDailyStudyCapHours` (default 5.5h–6.0h).
-4. **Rule 4 (Subject Interleaving)**: When multiple subjects have pending work, the algorithm interleaves different courses across adjacent slots to prevent mental saturation.
-
-### Conflict & Overload Diagnostics:
-When the total required study hours before a deadline exceed the available open study windows within the student's daily study cap, the algorithm:
-- Does NOT silently discard tasks.
-- Emits structured overload warnings (e.g., `"2.5 hours unallocated for CS 201 Problem Set 4 before Oct 8"`).
-- Displays actionable diagnostic banners prompting the student to either open up additional availability or adjust study caps.
+### Algorithmic Invariants & Complexity Analysis:
+1. **Recursion & Backtracking Mechanics**:
+   - Recursion occurs in `StudyFlowSchedulerEngine.recursiveSearch(itemIndex, ...)`, which recursively processes each work item sequentially.
+   - Branching occurs over ordered candidate slots returned by `generateCandidateSlots(...)`.
+   - Backtracking explicitly unwinds state when a branch fails: popping the session from `currentSchedule`, removing the interval from `occupiedByDate`, decrementing `dailyMinutesByDate`, and incrementing `state.backtrackCount`.
+2. **Pruning Rules**:
+   - **Forward-Checking**: If total free capacity remaining before an item's deadline is strictly less than the item's duration, the branch is immediately pruned.
+   - **Daily Study Cap Pruning**: Slots that would push a day's study workload over `targetDailyStudyCapHours * 60` are excluded.
+   - **Deadline Exclusion**: Any candidate slot whose completion timestamp exceeds `task.dueDate` is immediately pruned.
+3. **Worst-Case Complexity**:
+   - **Time Complexity**: $O(B^N)$ in the theoretical worst-case without pruning, where $B$ is the candidate slot branching factor (typically 5–15 per day) and $N$ is the number of work items. The search space is bounded by an explicit step budget (`maxSteps: 25,000`) and wall-clock timeout (`timeoutMs: 4,000ms`). It is strictly exponential in the worst case; no false polynomial claims are made.
+   - **Space Complexity**: $O(N)$ recursion depth stack frames, bounded by total work items ($\le 100$), plus $O(S)$ storage for placed sessions.
+4. **Optimality vs Feasibility Guarantee**:
+   - The engine guarantees **Hard Constraint Satisfaction** (no overlaps, no deadline violations, no locked session overwrites, no daily cap exceedance).
+   - Candidate slots are scored heuristically (anti-cramming buffer, preferred time of day, load balancing). Because a step budget is enforced to protect server latency, the solution is **heuristically optimized**, not mathematically proven globally optimal.
+5. **Root-Cause Unscheduled Diagnostics**:
+   - When a task cannot fit, it is never silently dropped. The engine diagnoses exact mathematical failure reasons:
+     - `DEADLINE_INFEASIBLE`: Free minutes before deadline < needed task hours.
+     - `INSUFFICIENT_AVAILABILITY`: Total calendar study availability < needed hours.
+     - `DAILY_CAP_REACHED`: Open availability exists, but daily study fatigue cap was reached.
+     - `LOCKED_BLOCK_CONFLICT`: Locked blocks fragmented windows preventing required chunks.
+     - `SEARCH_LIMIT_EXCEEDED`: Search budget expired before complete placement was found.
 
 ### 6.1 Scheduler Input Contract: Availability & Study Preferences
 The deterministic scheduler engine strictly consumes the following validated contract from the database:
@@ -621,3 +640,48 @@ Data (Initial Mock Seeds / Future API Client)
 - **Deterministic Scheduling**: No stochastic AI calls or unpredictable LLM hallucinations for scheduling.
 - **Zero-Warning TypeScript**: All code compiles cleanly (`tsc --noEmit`) with strict type safety.
 - **Instant Usability**: Every route renders an active, responsive, interactive workspace.
+
+---
+
+## 10. Backend Security Model, Verified Invariants & Residual Operational Risks
+
+### 10.1 Authentication & Credential Architecture
+- **Password Storage**: Passwords hashed using `bcrypt` (10 salt rounds). Plaintext passwords are never logged or stored.
+- **Token Generation**: JSON Web Tokens (JWT) signed using HMAC SHA-256 with environment secret `JWT_SECRET` (strict production requirement). Expiration set to 7 days (`7d`).
+- **Token Claims**: Contains `userId`, `email`, `role`, and `name`. Tokens are stateless bearer credentials transmitted via `Authorization: Bearer <token>`.
+- **Identity Derivation**: `authenticate` middleware decodes token and re-verifies user existence in database on every request. Deleted/deactivated accounts are immediately rejected with 401 Unauthorized.
+- **Sensitive Field Omission**: Password hashes are strictly omitted from all public, student, and admin user query responses (`{ passwordHash: _, ...safeUser }`).
+
+### 10.2 Authorization & Data Ownership Enforcement
+- **Cross-User Data Isolation**: All student deliverables (subjects, tasks, availability slots, schedules, study sessions, notifications, progress summaries) enforce `where: { userId }` filtering.
+- **Ownership Verification**: Direct ID lookups (`GET`, `PATCH`, `DELETE`) verify `record.userId === req.user.userId`. Cross-user access returns 403 Forbidden.
+- **Relational Integrity**: Attaching tasks or study blocks requires verifying that both the parent subject and task belong to the authenticated student (`task.subjectId === validSubjectId`).
+- **Administrative Access**: Admin routes (`/api/admin/*`) require `requireRole('admin')`. Non-admin users are rejected with 403 Forbidden.
+- **Administrative Safeguards**:
+  - *Last-Admin Protection*: Demoting the last active administrator account is blocked with 403 Forbidden.
+  - *Self-Demotion Safeguard*: Administrators cannot demote their own account; another administrator must execute the role change.
+  - *Audit Logging*: Sensitive admin operations (role changes, status changes, announcements) are recorded in `AuditLog`.
+
+### 10.3 Input Validation & Defensive Boundaries
+- **Email Validation**: Strict regex format validation, lowercase canonicalization.
+- **Password Length**: Minimum 6 characters; maximum 128 characters (mitigates bcrypt CPU starvation attacks).
+- **Identifier Validation**: IDs validated for alphanumeric/hyphen/underscore characters (length 3–128).
+- **Time & Interval Invariants**: Availability and study sessions strictly enforce HH:mm 24-hour format, start < end, non-negative duration, minimum duration 15 minutes, and same-day interval invariants (no overnight intervals across midnight).
+- **Preference Boundaries**: Daily study caps bounded between 1.0h and 14.0h; default sessions 20m–180m; breaks 5m–60m; buffer 0m–45m.
+- **Lock Protection**: Locked study sessions reject rescheduling or deletion unless explicitly unlocked or confirmed with `force=true`.
+
+### 10.4 Error Sanitization & Information Leakage
+- **Error Shielding**: Production 500 Internal Server Errors are masked with generic user-friendly messages. SQL query strings, database connection parameters, filesystem paths, and stack traces are never transmitted to clients.
+- **Health Check Safety**: `/api/health` validates database connectivity and latency without leaking database connection strings or credentials.
+
+### 10.5 Active Security Controls
+- **Security Headers**: Standard headers injected (`X-Content-Type-Options: nosniff`, `X-XSS-Protection: 0`, `Referrer-Policy: strict-origin-when-cross-origin`, removal of `X-Powered-By`).
+- **CORS Policy**: Configured to accept same-origin and AI Studio dev preview requests with credentials, while rejecting unauthorized cross-origin requests.
+- **Payload Limits**: Request bodies restricted to 1MB (`express.json({ limit: '1mb' })`).
+- **Rate Limiting**: In-memory token bucket limiter applied to `/api/auth/register` and `/api/auth/login` (30 requests per 5 minutes per IP) to mitigate credential stuffing.
+
+### 10.6 Residual Operational Risks & Required Production Configuration
+- **Stateless Token Revocation**: Logout (`POST /api/auth/logout`) is currently client-side token discard. An extracted/stolen token remains valid until its 7-day expiration unless a distributed token blacklist / Redis blocklist is implemented.
+- **In-Memory Rate Limiting**: The current rate limiter is process-local. In a multi-instance autoscaled container deployment, a shared Redis store is required for synchronized IP rate limits.
+- **Production Database**: Deploying with high concurrency requires provisioning a production PostgreSQL instance (e.g. AI Studio Cloud SQL with Unix Domain Socket) and setting a cryptographically random `JWT_SECRET` in environment variables.
+

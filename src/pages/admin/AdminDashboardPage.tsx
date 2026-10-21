@@ -42,7 +42,7 @@ export function AdminDashboardPage() {
         const [metricRes, auditRes, healthRes] = await Promise.all([
           adminService.getMetrics().catch(() => null),
           adminService.getAuditLogs({ limit: 4, order: 'desc' }).catch(() => null),
-          fetch('/api/health').then((r) => r.json()).catch(() => null),
+          adminService.getHealth().catch(() => null),
         ]);
 
         if (metricRes && metricRes.success) {

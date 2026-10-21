@@ -73,7 +73,7 @@ export class AdminController {
 
       res.json({
         success: true,
-        data: usersList.map((u) => ({
+        data: usersList.map((u: any) => ({
           id: u.id,
           email: u.email,
           name: u.name,
@@ -176,7 +176,14 @@ export class AdminController {
 
       const previousRole = targetUser.role;
 
-      // Safeguard: Prevent removing the LAST administrator in the institution
+      // Safeguard 1: Prevent an administrator from demoting themselves directly
+      if (callerUserId === targetUserId && normRole !== 'ADMIN') {
+        throw ApiError.forbidden(
+          'Self-demotion is prohibited. Another administrator must change your role.'
+        );
+      }
+
+      // Safeguard 2: Prevent removing the LAST administrator in the institution
       if (targetUser.role === 'ADMIN' && normRole !== 'ADMIN') {
         const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
         if (adminCount <= 1) {
@@ -184,13 +191,6 @@ export class AdminController {
             'Cannot demote the last administrator account. The system must retain at least one active administrator.'
           );
         }
-      }
-
-      // Safeguard: Prevent an administrator from demoting themselves directly without another admin present
-      if (callerUserId === targetUserId && normRole !== 'ADMIN') {
-        throw ApiError.forbidden(
-          'Self-demotion is prohibited. Another administrator must change your role.'
-        );
       }
 
       const updatedUser = await prisma.user.update({
@@ -425,7 +425,7 @@ export class AdminController {
         where: { status: 'COMPLETED' },
         select: { actualMinutesLogged: true, durationMinutes: true },
       });
-      const totalLoggedMinutes = sessions.reduce((acc, s) => acc + (s.actualMinutesLogged || s.durationMinutes), 0);
+      const totalLoggedMinutes = sessions.reduce((acc: number, s: any) => acc + (s.actualMinutesLogged || s.durationMinutes), 0);
       const totalLoggedHours = Math.round((totalLoggedMinutes / 60) * 10) / 10;
 
       const taskCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;

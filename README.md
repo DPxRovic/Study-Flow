@@ -111,28 +111,52 @@ StudyFlow implements a deterministic **greedy knapsack algorithm with interval s
 
 ## 🚀 Getting Started
 
-### Installation & Development
+### Installation & Environment Configuration
 ```bash
-# Install dependencies
+# 1. Install dependencies
 npm install
 
-# Start local dev server (Runs on port 3000)
+# 2. Configure environment (see .env.example)
+# DATABASE_URL="postgresql://..."
+# JWT_SECRET="..."
+# VITE_API_BASE_URL="/api"
+```
+
+### Running Frontend and Backend Together
+StudyFlow utilizes a unified full-stack architecture where the Express API server mounts Vite middlewares during development on port 3000, routing all `/api` operations to database controllers while serving HMR React client assets.
+
+```bash
+# Start unified full-stack development server (Port 3000)
 npm run dev
 
 # Run TypeScript type check
 npm run lint
 
-# Database operations (PostgreSQL with Prisma ORM)
+# Build production bundle
+npm run build
+
+# Start production server
+npm run start
+```
+
+### Database Operations (PostgreSQL with Prisma ORM)
+```bash
 npm run db:validate    # Validate Prisma schema
 npm run db:migrate     # Run development database migrations
 npm run db:deploy      # Apply migrations in production deployment
 npm run db:seed        # Seed development accounts and coursework
+```
 
-# Run backend & database integration test suite
+### Test Suites
+```bash
+# 1. Run Core Academic Backend & Availability Suite (90 tests)
 npm run test:backend
 
-# Build production bundle
-npm run build
+# 2. Run Full-Stack E2E Client-Server Integration Suite (57 tests)
+npm run test:integration
+
+# 3. Run all automated tests
+npm run test
 ```
 
 ---

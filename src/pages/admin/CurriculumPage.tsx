@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
   BookOpen,
@@ -28,12 +28,31 @@ import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../context/ToastContext';
 import { CatalogCourse } from '../../types';
 import { INITIAL_CATALOG_COURSES } from '../../data/mockData';
+import { adminService } from '../../services/adminService';
 
 export function CurriculumPage() {
   const { showToast } = useToast();
   const [courses, setCourses] = useState<CatalogCourse[]>(INITIAL_CATALOG_COURSES);
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('all');
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    async function loadCatalog() {
+      setIsLoading(true);
+      try {
+        const res = await adminService.getCatalog();
+        if (res && res.success && res.data && res.data.length > 0) {
+          setCourses(res.data);
+        }
+      } catch (err) {
+        console.warn('Could not load catalog from API, using defaults:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadCatalog();
+  }, []);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);

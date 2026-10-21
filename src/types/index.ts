@@ -61,6 +61,7 @@ export type TaskStatus = 'backlog' | 'scheduled' | 'in_progress' | 'completed';
 
 export interface Task {
   id: string;
+  userId?: string;
   subjectId: string;
   title: string;
   dueDate: string;            // ISO String e.g. "2026-10-12T17:00:00"
@@ -235,8 +236,9 @@ export interface ScheduleGenerationOptions {
   startDate: string;                    // "YYYY-MM-DD"
   endDate: string;                      // "YYYY-MM-DD"
   mode: 'balanced' | 'front_loaded' | 'pomodoro';
-  maxDailyHours: number;
-  breakDurationMinutes: number;
+  maxDailyHours?: number;
+  dailyStudyCapHours?: number;
+  breakDurationMinutes?: number;
 }
 
 export type NotificationCategory =
