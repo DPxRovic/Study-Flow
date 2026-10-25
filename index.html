@@ -9,6 +9,46 @@
     <meta property="og:description" content="A calm, student-first study planner and assignment scheduler designed to help college students organize subjects, deadlines, and study hours into realistic daily schedules." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // Safeguard against third-party Web3 wallet extension collisions (e.g. Phantom / MetaMask evmAsk.js)
+      (function() {
+        try {
+          var originalDefineProperty = Object.defineProperty;
+          Object.defineProperty = function(obj, prop, descriptor) {
+            if (obj === window && prop === 'ethereum') {
+              try {
+                return originalDefineProperty.call(Object, obj, prop, descriptor);
+              } catch (err) {
+                try {
+                  window.ethereum = descriptor && (descriptor.value !== undefined ? descriptor.value : (descriptor.get ? descriptor.get() : window.ethereum));
+                } catch (_) {}
+                return obj;
+              }
+            }
+            return originalDefineProperty.call(Object, obj, prop, descriptor);
+          };
+        } catch (_) {}
+
+        window.addEventListener('error', function(event) {
+          var isExtensionError =
+            (event.filename && (
+              event.filename.indexOf('chrome-extension://') !== -1 ||
+              event.filename.indexOf('evmAsk.js') !== -1 ||
+              event.filename.indexOf('ethereum') !== -1
+            )) ||
+            (event.message && (
+              event.message.indexOf('Cannot redefine property: ethereum') !== -1 ||
+              event.message.indexOf('evmAsk') !== -1
+            ));
+
+          if (isExtensionError) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+            return true;
+          }
+        }, true);
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
