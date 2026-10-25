@@ -18,12 +18,14 @@ import { Skeleton } from '../../components/ui/Skeleton';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { usePlanner } from '../../context/PlannerContext';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 import { CoreMetricsGrid } from '../../components/progress/CoreMetricsGrid';
 import { WorkloadBalanceBar } from '../../components/progress/WorkloadBalanceBar';
 import { SubjectAttentionMatrix } from '../../components/progress/SubjectAttentionMatrix';
 import { WeeklyPacingChart } from '../../components/progress/WeeklyPacingChart';
 import { DeadlineWorkloadHorizon } from '../../components/progress/DeadlineWorkloadHorizon';
 import { StudyReflectionSection } from '../../components/progress/StudyReflectionSection';
+import { formatCurrentWeekLabel, getLocalWeekDays } from '../../utils/date';
 
 export function ProgressPage() {
   const {
@@ -34,9 +36,9 @@ export function ProgressPage() {
     addJournalEntry,
     refreshData,
   } = usePlanner();
+  const { user } = useAuth();
   const { showToast } = useToast();
 
-  const [timeHorizon, setTimeHorizon] = useState<'week' | 'fortnight' | 'term'>('week');
   const [isLoading, setIsLoading] = useState(false);
   const [simulatedError, setSimulatedError] = useState<string | null>(null);
 
@@ -69,15 +71,26 @@ export function ProgressPage() {
   const scheduledHours = sessions
     .filter((s) => !s.completed && s.status !== 'cancelled')
     .reduce((acc, s) => acc + s.durationMinutes / 60, 0);
-  const completedSessionHours = sessions
-    .filter((s) => s.completed)
-    .reduce((acc, s) => acc + s.durationMinutes / 60, 0);
-
   const unscheduledHours = Math.max(0, totalRemainingHours - scheduledHours);
 
   // Weekly targets
   const weeklyTargetHours = subjects.reduce((acc, s) => acc + s.weeklyTargetHours, 0);
-  const weeklyLoggedHours = completedSessionHours + 5.5; // includes previous week days in demo dataset (17.5h)
+  const currentWeekDateKeys = new Set(getLocalWeekDays().map((day) => day.date));
+  const weeklyLoggedHours = sessions
+    .filter((session) => session.completed && currentWeekDateKeys.has(session.date))
+    .reduce((acc, session) => acc + (session.actualMinutesLogged ?? session.durationMinutes) / 60, 0);
+  const dailyCapHours = user?.targetDailyStudyCapHours || 5.5;
+  const currentWeekWorkByDay = getLocalWeekDays().map((day) => ({
+    date: day.date,
+    hours: sessions
+      .filter((session) => session.date === day.date && session.status !== 'cancelled')
+      .reduce((acc, session) => acc + session.durationMinutes / 60, 0),
+  }));
+  const activeStudyDays = currentWeekWorkByDay.filter((day) => day.hours > 0);
+  const capExceededDaysCount = activeStudyDays.filter((day) => day.hours > dailyCapHours).length;
+  const capAdherencePercentage = activeStudyDays.length > 0
+    ? Math.round(((activeStudyDays.length - capExceededDaysCount) / activeStudyDays.length) * 100)
+    : 0;
 
   // Imminent deadlines (<= 72 hours)
   const imminentDeadlines = tasks.filter((t) => {
@@ -99,8 +112,9 @@ export function ProgressPage() {
   // Export analytics summary
   const handleExportSummary = () => {
     const summaryData = {
-      term: 'Fall 2026',
-      week: 7,
+      term: user?.term || 'Current term',
+      horizon: 'current-week',
+      week: formatCurrentWeekLabel(),
       totalCourses: subjects.length,
       completionRate: `${Math.round((completedTasksCount / Math.max(1, totalTasksCount)) * 100)}%`,
       completedHours: totalCompletedHours,
@@ -115,7 +129,7 @@ export function ProgressPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `StudyFlow_Pacing_Report_Week7.json`;
+    a.download = `StudyFlow_Pacing_Report_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
     showToast('Pacing summary exported to JSON', 'success');
@@ -124,7 +138,7 @@ export function ProgressPage() {
   // Error State View
   if (simulatedError) {
     return (
-      <div className="max-w-5xl space-y-6 pb-12">
+      <div className="max-w-[1440px] w-full space-y-6 pb-12 font-sans">
         <div className="surface-base rounded-2xl p-8 border border-rose-200 text-center space-y-4 shadow-2xs">
           <AlertTriangle className="w-10 h-10 text-rose-500 mx-auto" />
           <div>
@@ -148,7 +162,7 @@ export function ProgressPage() {
   // Empty State View (if no courses enrolled)
   if (subjects.length === 0 && tasks.length === 0) {
     return (
-      <div className="max-w-5xl space-y-6 pb-12">
+      <div className="max-w-[1440px] w-full space-y-6 pb-12 font-sans">
         <div className="border-b border-slate-200/80 pb-5">
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
             Study Pacing & Progress
@@ -167,21 +181,25 @@ export function ProgressPage() {
             window.location.href = '/subjects';
           }}
         />
+        <StudyReflectionSection
+          journalEntries={journalEntries}
+          onAddEntry={addJournalEntry}
+        />
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 max-w-5xl pb-12">
+    <div className="space-y-8 max-w-[1440px] w-full pb-12 font-sans">
       {/* Editorial Header */}
       <div className="border-b border-slate-200/80 pb-5 flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <div className="text-xs text-slate-500 font-semibold mb-1 flex items-center gap-2">
             <span>Longitudinal Analytics</span>
             <span aria-hidden="true">·</span>
-            <span>Fall 2026</span>
+            <span>{user?.term || 'Current Term'}</span>
             <span aria-hidden="true">·</span>
-            <span className="font-bold text-sky-850">Week 7</span>
+            <span className="font-bold text-sky-850">Week of {formatCurrentWeekLabel()}</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
             Study Pacing & Workload Analytics
@@ -193,38 +211,8 @@ export function ProgressPage() {
 
         {/* Filter Controls & Secondary Actions */}
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {/* Segmented Time Horizon Selector */}
-          <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200/70">
-            <button
-              onClick={() => setTimeHorizon('week')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
-                timeHorizon === 'week'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Week 7
-            </button>
-            <button
-              onClick={() => setTimeHorizon('fortnight')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
-                timeHorizon === 'fortnight'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Last 14 Days
-            </button>
-            <button
-              onClick={() => setTimeHorizon('term')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
-                timeHorizon === 'term'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Term Horizon
-            </button>
+          <div className="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 border border-slate-200/70">
+            Current-week analytics
           </div>
 
           <Button
@@ -275,7 +263,9 @@ export function ProgressPage() {
             totalTasksCount={totalTasksCount}
             weeklyTargetHours={weeklyTargetHours}
             weeklyLoggedHours={weeklyLoggedHours}
-            dailyCapHours={5.5}
+            dailyCapHours={dailyCapHours}
+            capAdherencePercentage={capAdherencePercentage}
+            capExceededDaysCount={capExceededDaysCount}
             imminentDeadlinesCount={imminentDeadlines.length}
             attentionSubjectsCount={attentionSubjects.length}
           />
@@ -298,7 +288,7 @@ export function ProgressPage() {
           {/* Section 4: Daily Completion & Fatigue Cap Adherence Chart (Mon-Sun) */}
           <WeeklyPacingChart
             sessions={sessions}
-            dailyCapHours={5.5}
+            dailyCapHours={dailyCapHours}
           />
 
           {/* Section 5: "What deadlines are approaching?" Chronological Horizon */}

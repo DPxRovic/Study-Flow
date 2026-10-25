@@ -23,6 +23,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
+import { EmptyState } from '../../components/ui/EmptyState';
 import { usePlanner } from '../../context/PlannerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -143,6 +144,7 @@ export function AvailabilityPage() {
   };
 
   const handleDeleteSlot = (id: string) => {
+    if (!window.confirm('Delete this weekly time window? This cannot be undone.')) return;
     deleteAvailabilitySlot(id);
   };
 
@@ -210,7 +212,7 @@ export function AvailabilityPage() {
   };
 
   return (
-    <div className="space-y-7 max-w-6xl pb-14">
+    <div className="space-y-7 max-w-[1440px] w-full pb-14 font-sans">
       {/* =========================================================================
           1. HEADER & ACTIONS
          ========================================================================= */}
@@ -317,6 +319,17 @@ export function AvailabilityPage() {
         </div>
       )}
 
+      {availability.length === 0 ? (
+        <EmptyState
+          icon={<Calendar className="w-7 h-7 text-sky-600" />}
+          title="Set your weekly availability"
+          description="Add class times, work or personal commitments, and at least one preferred study window so StudyFlow can build a realistic schedule."
+          actionLabel="Add Your First Time Window"
+          onAction={() => handleOpenAdd(new Date().getDay())}
+          className="max-w-2xl"
+        />
+      ) : (
+      <>
       {/* =========================================================================
           4. INTENTIONAL MOBILE DAY-BY-DAY VIEW (< md screens)
          ========================================================================= */}
@@ -647,6 +660,8 @@ export function AvailabilityPage() {
           })}
         </div>
       </div>
+      </>
+      )}
 
       {/* =========================================================================
           6. ADD / EDIT TIME WINDOW MODAL

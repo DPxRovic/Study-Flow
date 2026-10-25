@@ -22,17 +22,14 @@ import {
   Sliders,
   Flame,
   ChevronRight,
-  UserCheck,
   ShieldAlert,
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { useAuth } from '../../context/AuthContext';
-import { useToast } from '../../context/ToastContext';
 
 export function LandingPage() {
   const navigate = useNavigate();
-  const { isAuthenticated, user, login } = useAuth();
-  const { showToast } = useToast();
+  const { isAuthenticated, user } = useAuth();
 
   const [demoSessionDone, setDemoSessionDone] = useState(false);
 
@@ -48,18 +45,6 @@ export function LandingPage() {
       : calculatedDaysNeeded > 4
       ? { label: 'Optimal Spacing', color: 'text-emerald-700 bg-emerald-50 border-emerald-200' }
       : { label: 'Light Academic Load', color: 'text-sky-700 bg-sky-50 border-sky-200' };
-
-  const handleQuickDemoLaunch = async (demoEmail: string, demoPass: string) => {
-    try {
-      const res = await login(demoEmail, demoPass);
-      if (res.success) {
-        showToast(`Instant demo loaded for ${res.user?.name}!`, 'success');
-        navigate(res.user?.role === 'admin' ? '/admin' : '/dashboard');
-      }
-    } catch {
-      showToast('Could not load demo.', 'error');
-    }
-  };
 
   return (
     <div className="space-y-24 py-6 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
@@ -123,17 +108,6 @@ export function LandingPage() {
               </>
             )}
 
-            {/* Quick 1-Click Instant Demo Launch */}
-            {!isAuthenticated && (
-              <button
-                type="button"
-                onClick={() => handleQuickDemoLaunch('m.lin@university.edu', 'studyflow2026')}
-                className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold text-sky-800 bg-sky-50 hover:bg-sky-100/80 rounded-xl border border-sky-200 transition-colors cursor-pointer"
-              >
-                <UserCheck className="w-3.5 h-3.5 text-sky-600" />
-                <span>Instant Demo: Maya (Student)</span>
-              </button>
-            )}
           </div>
 
           {/* 3 Physical Atelier Feature Anchors */}

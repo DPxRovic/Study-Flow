@@ -30,7 +30,10 @@ export function GuestRoute({ children }: GuestRouteProps) {
 
   if (isAuthenticated) {
     // If returning from a redirected page, redirect there, otherwise go to their home workspace
-    const from = (location.state as any)?.from?.pathname;
+    const previousLocation = (location.state as any)?.from;
+    const from = previousLocation
+      ? `${previousLocation.pathname || ''}${previousLocation.search || ''}${previousLocation.hash || ''}`
+      : '';
     if (from && from !== '/login' && from !== '/register') {
       return <Navigate to={from} replace />;
     }

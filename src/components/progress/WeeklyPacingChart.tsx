@@ -6,6 +6,7 @@
 import React from 'react';
 import { Calendar, TrendingUp, ShieldCheck } from 'lucide-react';
 import { ScheduledSession } from '../../types';
+import { getLocalWeekDays } from '../../utils/date';
 
 interface WeeklyPacingChartProps {
   sessions: ScheduledSession[];
@@ -24,16 +25,11 @@ export function WeeklyPacingChart({
   sessions,
   dailyCapHours = 5.5,
 }: WeeklyPacingChartProps) {
-  // Build days for current week: 2026-10-05 (Monday) to 2026-10-11 (Sunday)
-  const weekDays = [
-    { dayName: 'Monday', dayShort: 'Mon', dateStr: '2026-10-05' },
-    { dayName: 'Tuesday', dayShort: 'Tue', dateStr: '2026-10-06' },
-    { dayName: 'Wednesday', dayShort: 'Wed', dateStr: '2026-10-07' },
-    { dayName: 'Thursday', dayShort: 'Thu', dateStr: '2026-10-08' },
-    { dayName: 'Friday', dayShort: 'Fri', dateStr: '2026-10-09' },
-    { dayName: 'Saturday', dayShort: 'Sat', dateStr: '2026-10-10' },
-    { dayName: 'Sunday', dayShort: 'Sun', dateStr: '2026-10-11' },
-  ];
+  const weekDays = getLocalWeekDays().map((day) => ({
+    dayName: day.fullName,
+    dayShort: day.name,
+    dateStr: day.date,
+  }));
 
   const pacingData: DayPacingData[] = weekDays.map((d) => {
     const daySessions = sessions.filter((s) => s.date === d.dateStr);

@@ -14,31 +14,44 @@ import { useToast } from '../../context/ToastContext';
 
 export function SettingsPage() {
   const { user, updateUserPreferences } = useAuth();
-  const { resetDemoData, tasks, subjects, todaySessions } = usePlanner();
+  const {
+    refreshData,
+    tasks,
+    subjects,
+    sessions,
+    availability,
+    notifications,
+    announcements,
+    journalEntries,
+  } = usePlanner();
   const { showToast } = useToast();
 
-  const [name, setName] = useState(user?.name || 'Maya Lin');
-  const [major, setMajor] = useState(user?.major || 'Computer Science & Cognitive Science');
-  const [term, setTerm] = useState(user?.term || 'Fall 2026');
+  const [name, setName] = useState(user?.name || '');
+  const [major, setMajor] = useState(user?.major || '');
+  const [term, setTerm] = useState(user?.term || '');
   const [sessionMinutes, setSessionMinutes] = useState(user?.defaultSessionMinutes?.toString() || '50');
   const [dailyCap, setDailyCap] = useState(user?.targetDailyStudyCapHours?.toString() || '5.5');
   const [breakMinutes, setBreakMinutes] = useState(user?.preferredBreakMinutes?.toString() || '10');
   const [studyTime, setStudyTime] = useState(user?.preferredStudyTime || 'afternoon');
   const [bufferMinutes, setBufferMinutes] = useState(user?.bufferMinutes?.toString() || '15');
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateUserPreferences({
-      name,
-      major,
-      term,
-      defaultSessionMinutes: parseInt(sessionMinutes, 10) || 50,
-      targetDailyStudyCapHours: parseFloat(dailyCap) || 5.5,
-      preferredBreakMinutes: parseInt(breakMinutes, 10) || 10,
-      preferredStudyTime: studyTime as any,
-      bufferMinutes: parseInt(bufferMinutes, 10) || 15,
-    });
-    showToast('Student settings saved successfully', 'success');
+    try {
+      await updateUserPreferences({
+        name,
+        major,
+        term,
+        defaultSessionMinutes: Number(sessionMinutes),
+        targetDailyStudyCapHours: Number(dailyCap),
+        preferredBreakMinutes: Number(breakMinutes),
+        preferredStudyTime: studyTime as any,
+        bufferMinutes: Number(bufferMinutes),
+      });
+      showToast('Student settings saved successfully', 'success');
+    } catch (error: any) {
+      showToast(error?.message || 'Unable to save student settings', 'error');
+    }
   };
 
   const handleExportData = () => {
@@ -46,7 +59,11 @@ export function SettingsPage() {
       user,
       tasks,
       subjects,
-      todaySessions,
+      sessions,
+      availability,
+      notifications,
+      announcements,
+      journalEntries,
       exportedAt: new Date().toISOString(),
     };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
@@ -60,7 +77,7 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="space-y-7 max-w-5xl pb-10">
+    <div className="space-y-7 max-w-[1440px] w-full pb-10 font-sans">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/90 pb-4">
         <div>
@@ -164,9 +181,9 @@ export function SettingsPage() {
 
       {/* Data Management Section */}
       <div className="p-6 bg-white rounded-2xl border border-slate-200/90 shadow-2xs space-y-3">
-        <h2 className="text-base font-bold text-slate-900">Data Management & Reset</h2>
+        <h2 className="text-base font-bold text-slate-900">Data Management</h2>
         <p className="text-xs text-slate-500 leading-relaxed font-medium">
-          Download a full export of your course tasks and schedules, or reset the demo data back to the clean initial semester state.
+          Download your course data or reload the latest planner records saved to your account.
         </p>
 
         <div className="flex flex-wrap gap-2.5 pt-1">
@@ -178,11 +195,11 @@ export function SettingsPage() {
             Export All Data (JSON)
           </Button>
           <Button
-            variant="destructive"
-            onClick={resetDemoData}
+            variant="secondary"
+            onClick={refreshData}
             icon={<RotateCcw className="w-3.5 h-3.5" />}
           >
-            Reset Demo Data
+            Reload Account Data
           </Button>
         </div>
       </div>

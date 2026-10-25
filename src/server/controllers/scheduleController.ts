@@ -14,11 +14,115 @@ import {
   validateSessionStatus,
   validateString,
   validateNumber,
+  validateBoolean,
 } from '../utils/validators';
 import { StudyFlowSchedulerEngine } from '../services/scheduler/schedulerEngine';
 
 function intervalsOverlap(startA: string, endA: string, startB: string, endB: string): boolean {
   return startA < endB && startB < endA;
+}
+
+function timeToMinutes(value: string): number {
+  const [hours, minutes] = value.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+function localDateKey(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+async function assertManualSessionConstraints(
+  tx: any,
+  params: {
+    userId: string;
+    date: string;
+    start: string;
+    end: string;
+    durationMinutes: number;
+    taskDueDate: Date;
+    excludeSessionId?: string;
+  }
+) {
+  const { userId, date, start, end, durationMinutes, taskDueDate, excludeSessionId } = params;
+  const dayOfWeek = new Date(`${date}T00:00:00`).getDay();
+  const [preferences, availability, existingSessions] = await Promise.all([
+    tx.user.findUnique({
+      where: { id: userId },
+      select: {
+        targetDailyStudyCapHours: true,
+        preferredBreakMinutes: true,
+        bufferMinutes: true,
+      },
+    }),
+    tx.availabilitySlot.findMany({ where: { userId, dayOfWeek } }),
+    tx.studySession.findMany({
+      where: {
+        userId,
+        date,
+        status: { not: 'CANCELLED' },
+        ...(excludeSessionId ? { NOT: { id: excludeSessionId } } : {}),
+      },
+    }),
+  ]);
+
+  if (!preferences) throw ApiError.notFound('Student account not found');
+
+  const startMinutes = timeToMinutes(start);
+  const endMinutes = timeToMinutes(end);
+  const preferredWindows = availability.filter(
+    (slot: any) => String(slot.type).toUpperCase() === 'PREFERRED_STUDY'
+  );
+  if (
+    preferredWindows.length > 0 &&
+    !preferredWindows.some(
+      (slot: any) => startMinutes >= timeToMinutes(slot.startTime) && endMinutes <= timeToMinutes(slot.endTime)
+    )
+  ) {
+    throw ApiError.badRequest('Study session must fit inside a preferred study window for this day');
+  }
+
+  const bufferMinutes = preferences.bufferMinutes || 0;
+  for (const slot of availability.filter(
+    (item: any) => String(item.type).toUpperCase() !== 'PREFERRED_STUDY'
+  )) {
+    const busyStart = Math.max(0, timeToMinutes(slot.startTime) - bufferMinutes);
+    const busyEnd = Math.min(24 * 60, timeToMinutes(slot.endTime) + bufferMinutes);
+    if (startMinutes < busyEnd && busyStart < endMinutes) {
+      throw ApiError.conflict(
+        `Study session conflicts with ${slot.label || String(slot.type).toLowerCase()} time and its transition buffer`
+      );
+    }
+  }
+
+  const requiredBreak = preferences.preferredBreakMinutes || 0;
+  for (const existing of existingSessions) {
+    const existingStart = timeToMinutes(existing.startTime);
+    const existingEnd = timeToMinutes(existing.endTime);
+    if (startMinutes < existingEnd + requiredBreak && existingStart - requiredBreak < endMinutes) {
+      throw ApiError.conflict(
+        `Study session must leave at least ${requiredBreak} minutes between study blocks`
+      );
+    }
+  }
+
+  const plannedMinutes = existingSessions.reduce(
+    (total: number, session: any) => total + session.durationMinutes,
+    0
+  );
+  const dailyCapMinutes = Math.round(preferences.targetDailyStudyCapHours * 60);
+  if (plannedMinutes + durationMinutes > dailyCapMinutes) {
+    throw ApiError.badRequest(
+      `Study session exceeds the ${preferences.targetDailyStudyCapHours} hour daily study cap`
+    );
+  }
+
+  const sessionEnd = new Date(`${date}T${end}:00`);
+  if (sessionEnd.getTime() > taskDueDate.getTime()) {
+    throw ApiError.badRequest('Study session must end before the task deadline');
+  }
 }
 
 export class ScheduleController {
@@ -30,7 +134,7 @@ export class ScheduleController {
       const { startDate, endDate } = req.query;
 
       // Default date window: today to +7 days if not provided
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = localDateKey();
       const startStr = startDate ? validateDateFormat(String(startDate), 'Start date') : todayStr;
       
       let endStr: string;
@@ -87,8 +191,17 @@ export class ScheduleController {
         orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
       });
 
-      // Find unscheduled tasks (tasks not completed that have remaining hours but zero future sessions)
-      const scheduledTaskIds = new Set(sessions.map((s: any) => s.taskId));
+      // Derive coverage from every future, active session rather than only the displayed range.
+      // Cancelled/missed/completed history must not hide work from the unscheduled queue.
+      const futureScheduledSessions = await prisma.studySession.findMany({
+        where: {
+          userId,
+          date: { gte: todayStr },
+          status: 'SCHEDULED',
+        },
+        select: { taskId: true },
+      });
+      const scheduledTaskIds = new Set(futureScheduledSessions.map((session: any) => session.taskId));
       const unscheduledTasks = await prisma.task.findMany({
         where: {
           userId,
@@ -255,21 +368,14 @@ export class ScheduleController {
 
       // Concurrency-safe overlap check and creation inside transaction
       const newSession = await prisma.$transaction(async (tx: any) => {
-        const existingSessions = await tx.studySession.findMany({
-          where: {
-            userId,
-            date: validDate,
-            status: { not: 'CANCELLED' }, // Cancelled sessions do not block
-          },
+        await assertManualSessionConstraints(tx, {
+          userId,
+          date: validDate,
+          start,
+          end,
+          durationMinutes,
+          taskDueDate: task.dueDate,
         });
-
-        for (const existing of existingSessions) {
-          if (intervalsOverlap(start, end, existing.startTime, existing.endTime)) {
-            throw ApiError.conflict(
-              `Study session from ${start} to ${end} overlaps with an existing scheduled session (${existing.startTime} - ${existing.endTime}) on ${validDate}`
-            );
-          }
-        }
 
         return tx.studySession.create({
           data: {
@@ -282,7 +388,7 @@ export class ScheduleController {
             durationMinutes,
             completed: false,
             status: 'SCHEDULED',
-            locked: Boolean(locked),
+            locked: locked === undefined ? false : validateBoolean(locked, 'Locked'),
             notes: notes ? validateString(notes, 'Notes', 0, 1000) : null,
           },
           include: {
@@ -294,7 +400,7 @@ export class ScheduleController {
             },
           },
         });
-      });
+      }, { isolationLevel: 'Serializable' });
 
       res.status(201).json({
         success: true,
@@ -315,6 +421,7 @@ export class ScheduleController {
 
       const session = await prisma.studySession.findUnique({
         where: { id: sessionId },
+        include: { task: { select: { dueDate: true } } },
       });
       if (!session) {
         throw ApiError.notFound('Study session block not found');
@@ -326,8 +433,20 @@ export class ScheduleController {
 
       const { date, startTime, endTime, notes, locked, unlockExplicit } = req.body;
 
+      const changesCompletedSessionTiming =
+        (session.status === 'COMPLETED' || session.completed) &&
+        ((date !== undefined && date !== session.date) ||
+          (startTime !== undefined && startTime !== session.startTime) ||
+          (endTime !== undefined && endTime !== session.endTime));
+      if (changesCompletedSessionTiming) {
+        throw ApiError.badRequest('Reopen a completed session before changing its date or duration');
+      }
+
       // Hard integrity rule: Locked sessions cannot have their time or date modified without explicit unlock
-      if (session.locked && !unlockExplicit && (date !== undefined || startTime !== undefined || endTime !== undefined)) {
+      const explicitlyUnlocked = unlockExplicit === undefined
+        ? false
+        : validateBoolean(unlockExplicit, 'Explicit unlock');
+      if (session.locked && !explicitlyUnlocked && (date !== undefined || startTime !== undefined || endTime !== undefined)) {
         throw ApiError.badRequest(
           'This study session is LOCKED to protect your committed study time. You must explicitly unlock it to modify date or time.'
         );
@@ -338,26 +457,22 @@ export class ScheduleController {
       const targetEnd = endTime ? validateTimeInterval(startTime || session.startTime, endTime).end : session.endTime;
       const { start, end, durationMinutes } = validateTimeInterval(targetStart, targetEnd);
 
-      const targetLocked = locked !== undefined ? Boolean(locked) : session.locked;
+      const targetLocked = locked !== undefined ? validateBoolean(locked, 'Locked') : session.locked;
       const targetNotes = notes !== undefined ? (notes ? validateString(notes, 'Notes', 0, 1000) : null) : session.notes;
 
       const updated = await prisma.$transaction(async (tx: any) => {
-        // Overlap verification
-        const otherSessions = await tx.studySession.findMany({
-          where: {
+        const timingChanged =
+          targetDate !== session.date || start !== session.startTime || end !== session.endTime;
+        if (timingChanged) {
+          await assertManualSessionConstraints(tx, {
             userId,
             date: targetDate,
-            status: { not: 'CANCELLED' },
-            NOT: { id: sessionId },
-          },
-        });
-
-        for (const other of otherSessions) {
-          if (intervalsOverlap(start, end, other.startTime, other.endTime)) {
-            throw ApiError.conflict(
-              `Updated time ${start} - ${end} overlaps with another scheduled session (${other.startTime} - ${other.endTime}) on ${targetDate}`
-            );
-          }
+            start,
+            end,
+            durationMinutes,
+            taskDueDate: session.task.dueDate,
+            excludeSessionId: sessionId,
+          });
         }
 
         return tx.studySession.update({
@@ -379,7 +494,7 @@ export class ScheduleController {
             },
           },
         });
-      });
+      }, { isolationLevel: 'Serializable' });
 
       res.json({
         success: true,
@@ -410,7 +525,7 @@ export class ScheduleController {
         throw ApiError.forbidden('You do not own this study session');
       }
 
-      const newLockState = locked !== undefined ? Boolean(locked) : !session.locked;
+      const newLockState = locked !== undefined ? validateBoolean(locked, 'Locked') : !session.locked;
 
       const updated = await prisma.studySession.update({
         where: { id: sessionId },
@@ -435,11 +550,14 @@ export class ScheduleController {
       const sessionId = validateId(req.params.id, 'Session ID');
       const { status, actualMinutesLogged } = req.body;
 
+      if (status === undefined || status === null || status === '') {
+        throw ApiError.badRequest('Session status is required');
+      }
+
       const targetStatus = validateSessionStatus(status);
 
       const session = await prisma.studySession.findUnique({
         where: { id: sessionId },
-        include: { task: true },
       });
 
       if (!session) {
@@ -450,43 +568,66 @@ export class ScheduleController {
         throw ApiError.forbidden('You do not own this study session');
       }
 
-      // Execute status transition and task remaining workload adjustment inside an atomic transaction
+      const requestedActualMinutes = actualMinutesLogged !== undefined
+        ? Math.round(validateNumber(actualMinutesLogged, 'Actual minutes logged', 0, 720))
+        : undefined;
+
+      // Execute status transition and task workload adjustment atomically. Numeric increment/decrement
+      // operations prevent concurrent completions from overwriting one another with stale values.
       const result = await prisma.$transaction(async (tx: any) => {
-        const previousStatus = session.status;
-        const sessionHours = session.durationMinutes / 60;
+        const currentSession = await tx.studySession.findUnique({
+          where: { id: sessionId },
+          include: { task: true },
+        });
+        if (!currentSession) throw ApiError.notFound('Study session block not found');
 
-        let taskRemainingUpdate: number | undefined;
+        const previousStatus = currentSession.status;
+        const validActualMinutes = targetStatus === 'COMPLETED'
+          ? requestedActualMinutes ?? currentSession.durationMinutes
+          : currentSession.actualMinutesLogged;
 
-        // Idempotent workload deduction:
-        // When transitioning TO COMPLETED from a non-completed state, deduct session hours from remainingHours
         if (targetStatus === 'COMPLETED' && previousStatus !== 'COMPLETED') {
-          const currentRemaining = session.task.remainingHours;
-          taskRemainingUpdate = Math.max(0, Math.round((currentRemaining - sessionHours) * 10) / 10);
-        }
-        // When transitioning FROM COMPLETED to SCHEDULED/MISSED/CANCELLED, restore session hours
-        else if (previousStatus === 'COMPLETED' && targetStatus !== 'COMPLETED') {
-          const currentRemaining = session.task.remainingHours;
-          taskRemainingUpdate = Math.min(
-            session.task.estimatedHours,
-            Math.round((currentRemaining + sessionHours) * 10) / 10
-          );
+          const creditHours = validActualMinutes / 60;
+          if (creditHours > 0) {
+            const decremented = await tx.task.updateMany({
+              where: { id: currentSession.taskId, remainingHours: { gte: creditHours } },
+              data: { remainingHours: { decrement: creditHours } },
+            });
+            if (decremented.count === 0) {
+              await tx.task.update({
+                where: { id: currentSession.taskId },
+                data: { remainingHours: 0 },
+              });
+            }
+          }
+        } else if (previousStatus === 'COMPLETED' && targetStatus !== 'COMPLETED') {
+          const restoreHours = (currentSession.actualMinutesLogged ?? currentSession.durationMinutes) / 60;
+          if (restoreHours > 0) {
+            const incremented = await tx.task.updateMany({
+              where: {
+                id: currentSession.taskId,
+                remainingHours: { lte: Math.max(0, currentSession.task.estimatedHours - restoreHours) },
+              },
+              data: { remainingHours: { increment: restoreHours } },
+            });
+            if (incremented.count === 0) {
+              await tx.task.update({
+                where: { id: currentSession.taskId },
+                data: { remainingHours: currentSession.task.estimatedHours },
+              });
+            }
+          }
         }
 
-        // If task workload was adjusted, update task
-        if (taskRemainingUpdate !== undefined) {
-          const isTaskNowDone = taskRemainingUpdate === 0;
-          await tx.task.update({
-            where: { id: session.taskId },
-            data: {
-              remainingHours: taskRemainingUpdate,
-              status: isTaskNowDone ? 'COMPLETED' : 'IN_PROGRESS',
-            },
-          });
+        if (targetStatus !== previousStatus) {
+          const updatedTask = await tx.task.findUnique({ where: { id: currentSession.taskId } });
+          if (updatedTask) {
+            await tx.task.update({
+              where: { id: currentSession.taskId },
+              data: { status: updatedTask.remainingHours <= 0 ? 'COMPLETED' : 'IN_PROGRESS' },
+            });
+          }
         }
-
-        const validActualMinutes = actualMinutesLogged !== undefined
-          ? Math.round(validateNumber(actualMinutesLogged, 'Actual minutes logged', 0, 720))
-          : targetStatus === 'COMPLETED' ? session.durationMinutes : session.actualMinutesLogged;
 
         return tx.studySession.update({
           where: { id: sessionId },
@@ -526,6 +667,7 @@ export class ScheduleController {
 
       const session = await prisma.studySession.findUnique({
         where: { id: sessionId },
+        include: { task: true },
       });
       if (!session) {
         throw ApiError.notFound('Study session block not found');
@@ -542,9 +684,25 @@ export class ScheduleController {
         );
       }
 
-      await prisma.studySession.delete({
-        where: { id: sessionId },
-      });
+      await prisma.$transaction(async (tx: any) => {
+        if (session.status === 'COMPLETED' || session.completed) {
+          const restoreHours = (session.actualMinutesLogged ?? session.durationMinutes) / 60;
+          const restoredRemaining = Math.min(
+            session.task.estimatedHours,
+            session.task.remainingHours + restoreHours
+          );
+          await tx.task.update({
+            where: { id: session.taskId },
+            data: {
+              remainingHours: restoredRemaining,
+              status: restoredRemaining > 0 ? 'IN_PROGRESS' : 'COMPLETED',
+            },
+          });
+        }
+        await tx.studySession.delete({
+          where: { id: sessionId },
+        });
+      }, { isolationLevel: 'Serializable' });
 
       res.json({
         success: true,

@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   CalendarRange,
   RotateCw,
@@ -24,6 +25,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
+import { EmptyState } from '../../components/ui/EmptyState';
 import { Badge } from '../../components/ui/Badge';
 import { usePlanner } from '../../context/PlannerContext';
 import { useAuth } from '../../context/AuthContext';
@@ -35,22 +37,28 @@ import { ScheduleConflictsBanner } from '../../components/schedule/ScheduleConfl
 import { UnscheduledTasksDrawer } from '../../components/schedule/UnscheduledTasksDrawer';
 import { SessionDetailModal } from '../../components/schedule/SessionDetailModal';
 import { SessionEditModal } from '../../components/schedule/SessionEditModal';
+import { formatCurrentWeekLabel, getLocalWeekDays, toLocalDateKey } from '../../utils/date';
 
 export function SchedulePage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const {
     sessions,
     tasks,
     subjects,
+    availability,
     conflicts,
     generateSchedule,
-    resetDemoData,
   } = usePlanner();
   const { showToast } = useToast();
 
   // View Mode: 'week' | 'day'
   const [viewMode, setViewMode] = useState<'week' | 'day'>('week');
-  const [selectedDayDate, setSelectedDayDate] = useState('2026-10-06'); // Anchor Tuesday
+  const [selectedDayDate, setSelectedDayDate] = useState(toLocalDateKey());
+  const weekDays = getLocalWeekDays();
+  const activeTasks = tasks.filter((task) => task.status !== 'completed' && task.remainingHours > 0);
+  const hasStudyAvailability = availability.some((slot) => slot.type === 'preferred_study');
+  const canGenerate = subjects.length > 0 && activeTasks.length > 0 && hasStudyAvailability;
 
   // Optimization Heuristic Mode
   const [mode, setMode] = useState<'balanced' | 'front_loaded' | 'pomodoro'>('balanced');
@@ -67,6 +75,10 @@ export function SchedulePage() {
 
   // Auto-generate handler
   const handleGenerate = () => {
+    if (!canGenerate) {
+      showToast('Add a course, an active task, and at least one study window before generating a schedule.', 'info');
+      return;
+    }
     setIsGenerating(true);
     setTimeout(() => {
       const result = generateSchedule({
@@ -109,7 +121,7 @@ export function SchedulePage() {
   const lockedCount = sessions.filter((s) => s.locked).length;
 
   return (
-    <div className="space-y-6 max-w-7xl pb-16">
+    <div className="space-y-6 max-w-[1440px] w-full pb-16 font-sans">
       {/* =========================================================================
           1. HEADER & PRIMARY ACTIONS
          ========================================================================= */}
@@ -117,7 +129,7 @@ export function SchedulePage() {
         <div>
           <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-1">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
-            <span>Academic Work Schedule · Fall Term Week 7</span>
+            <span>Academic Work Schedule · Week of {formatCurrentWeekLabel()}</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
             Study Schedule & Time Allocation
@@ -133,6 +145,7 @@ export function SchedulePage() {
           <Button
             variant="secondary"
             onClick={() => setIsUnscheduledDrawerOpen(true)}
+            disabled={tasks.length === 0}
             icon={<Layers className="w-4 h-4 text-slate-500" />}
           >
             Unscheduled Tasks
@@ -141,6 +154,7 @@ export function SchedulePage() {
           <Button
             variant="secondary"
             onClick={() => handleOpenAddSession()}
+            disabled={subjects.length === 0 || tasks.length === 0}
             icon={<Plus className="w-4 h-4 text-slate-500" />}
           >
             New Session Block
@@ -150,6 +164,7 @@ export function SchedulePage() {
             variant="primary"
             onClick={handleGenerate}
             loading={isGenerating}
+            disabled={!canGenerate || isGenerating}
             icon={<RotateCw className="w-4 h-4" />}
           >
             Regenerate Schedule
@@ -303,15 +318,7 @@ export function SchedulePage() {
         {/* Day selector if in Day View mode */}
         {viewMode === 'day' && (
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-            {[
-              { date: '2026-10-05', label: 'Mon Oct 5' },
-              { date: '2026-10-06', label: 'Tue Oct 6 (Today)' },
-              { date: '2026-10-07', label: 'Wed Oct 7' },
-              { date: '2026-10-08', label: 'Thu Oct 8' },
-              { date: '2026-10-09', label: 'Fri Oct 9' },
-              { date: '2026-10-10', label: 'Sat Oct 10' },
-              { date: '2026-10-11', label: 'Sun Oct 11' },
-            ].map((d) => (
+            {weekDays.map((d) => (
               <button
                 key={d.date}
                 onClick={() => setSelectedDayDate(d.date)}
@@ -321,7 +328,7 @@ export function SchedulePage() {
                     : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
                 }`}
               >
-                {d.label}
+                {d.name} {d.fullDate}{d.isToday ? ' (Today)' : ''}
               </button>
             ))}
           </div>
@@ -331,7 +338,37 @@ export function SchedulePage() {
       {/* =========================================================================
           5. SCHEDULE CONTENT
          ========================================================================= */}
-      {viewMode === 'week' ? (
+      {sessions.length === 0 ? (
+        <EmptyState
+          icon={<CalendarIcon className="w-7 h-7 text-sky-600" />}
+          title="No study sessions planned"
+          description={
+            subjects.length === 0
+              ? 'Start by adding your enrolled courses. Then add a task and weekly study availability before generating your schedule.'
+              : activeTasks.length === 0
+              ? 'Add an assignment or exam with a deadline before generating a study schedule.'
+              : !hasStudyAvailability
+              ? 'Set at least one preferred study window so StudyFlow knows when it can schedule focused work.'
+              : 'Your courses, tasks, and availability are ready. Generate your first balanced study plan.'
+          }
+          actionLabel={
+            subjects.length === 0
+              ? 'Add Your First Course'
+              : activeTasks.length === 0
+              ? 'Add a Task'
+              : !hasStudyAvailability
+              ? 'Set Weekly Availability'
+              : 'Generate Schedule'
+          }
+          onAction={() => {
+            if (subjects.length === 0) navigate('/subjects');
+            else if (activeTasks.length === 0) navigate('/tasks');
+            else if (!hasStudyAvailability) navigate('/availability');
+            else handleGenerate();
+          }}
+          className="max-w-2xl"
+        />
+      ) : viewMode === 'week' ? (
         <WeeklyTimeGrid
           onSelectSession={handleSelectSession}
           onAddSessionAtTime={(date, startTime) => handleOpenAddSession(date, startTime)}

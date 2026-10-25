@@ -27,12 +27,11 @@ import { Select } from '../../components/ui/Select';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../context/ToastContext';
 import { CatalogCourse } from '../../types';
-import { INITIAL_CATALOG_COURSES } from '../../data/mockData';
 import { adminService } from '../../services/adminService';
 
 export function CurriculumPage() {
   const { showToast } = useToast();
-  const [courses, setCourses] = useState<CatalogCourse[]>(INITIAL_CATALOG_COURSES);
+  const [courses, setCourses] = useState<CatalogCourse[]>([]);
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('all');
   const [isLoading, setIsLoading] = useState(false);
@@ -42,11 +41,18 @@ export function CurriculumPage() {
       setIsLoading(true);
       try {
         const res = await adminService.getCatalog();
-        if (res && res.success && res.data && res.data.length > 0) {
-          setCourses(res.data);
-        }
+        const catalogList = res?.success && Array.isArray(res.data) ? res.data : [];
+        setCourses(
+          catalogList.map((c: any) => ({
+            ...c,
+            title: c.title || c.name || c.code,
+            department: c.department || 'General Academics',
+          }))
+        );
       } catch (err) {
-        console.warn('Could not load catalog from API, using defaults:', err);
+        console.warn('Could not load catalog from API:', err);
+        setCourses([]);
+        showToast('Could not load the institutional catalog', 'error');
       } finally {
         setIsLoading(false);
       }
@@ -86,10 +92,10 @@ export function CurriculumPage() {
   const handleOpenEdit = (course: CatalogCourse) => {
     setEditingCourse(course);
     setCode(course.code);
-    setTitle(course.title);
-    setDepartment(course.department);
+    setTitle(course.title || (course as any).name || course.code);
+    setDepartment(course.department || 'General Academics');
     setCredits(String(course.credits));
-    setInstructor(course.instructor);
+    setInstructor(course.instructor || '');
     setExpectedHours(String(course.expectedWeeklyHours));
     setDescription(course.description || '');
     setSyllabusOverview(course.syllabusOverview || '');
@@ -97,61 +103,71 @@ export function CurriculumPage() {
   };
 
   // Form Submit
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!code.trim() || !title.trim()) {
       showToast('Course code and title are required', 'error');
       return;
     }
 
-    if (editingCourse) {
-      setCourses((prev) =>
-        prev.map((c) =>
-          c.id === editingCourse.id
-            ? {
-                ...c,
-                code: code.trim().toUpperCase(),
-                title: title.trim(),
-                department,
-                credits: parseInt(credits, 10) || 3,
-                instructor: instructor.trim() || 'Staff Faculty',
-                expectedWeeklyHours: parseFloat(expectedHours) || 6.0,
-                description: description.trim(),
-                syllabusOverview: syllabusOverview.trim(),
-              }
-            : c
-        )
-      );
-      showToast(`Updated master syllabus for ${code.trim().toUpperCase()}`, 'success');
-    } else {
-      const newCourse: CatalogCourse = {
-        id: `cat_${Date.now()}`,
-        code: code.trim().toUpperCase(),
-        title: title.trim(),
-        department,
-        credits: parseInt(credits, 10) || 3,
-        instructor: instructor.trim() || 'Staff Faculty',
-        expectedWeeklyHours: parseFloat(expectedHours) || 6.0,
-        description: description.trim(),
-        syllabusOverview: syllabusOverview.trim(),
-        activeEnrolledCount: 0,
-      };
-      setCourses([newCourse, ...courses]);
-      showToast(`Added ${newCourse.code} to institutional curriculum`, 'success');
-    }
+    const payload = {
+      code: code.trim().toUpperCase(),
+      title: title.trim(),
+      department: department.trim() || 'General Academics',
+      credits: parseInt(credits, 10) || 3,
+      instructor: instructor.trim() || 'Staff Faculty',
+      expectedWeeklyHours: parseFloat(expectedHours) || 6.0,
+      description: description.trim(),
+      syllabusOverview: syllabusOverview.trim(),
+    };
 
-    setIsModalOpen(false);
+    try {
+      if (editingCourse) {
+        await adminService.updateCatalogCourse(editingCourse.code, payload);
+        setCourses((prev) =>
+          prev.map((c) =>
+            c.code === editingCourse.code
+              ? {
+                  ...c,
+                  ...payload,
+                }
+              : c
+          )
+        );
+        showToast(`Updated master syllabus for ${payload.code}`, 'success');
+      } else {
+        const res = await adminService.createCatalogCourse(payload);
+        const newCourse: CatalogCourse = res?.data || {
+          id: `cat_${Date.now()}`,
+          ...payload,
+          activeEnrolledCount: 0,
+        };
+        setCourses((prev) => [newCourse, ...prev]);
+        showToast(`Added ${newCourse.code} to institutional curriculum`, 'success');
+      }
+      setIsModalOpen(false);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to persist course to catalog', 'error');
+    }
   };
 
   // Delete Course
-  const handleDeleteCourse = (targetCourse: CatalogCourse) => {
-    setCourses((prev) => prev.filter((c) => c.id !== targetCourse.id));
-    showToast(`Removed ${targetCourse.code} from institutional catalog`, 'info');
+  const handleDeleteCourse = async (targetCourse: CatalogCourse) => {
+    if (!window.confirm(`Are you sure you want to remove ${targetCourse.code} from the institutional curriculum?`)) {
+      return;
+    }
+    try {
+      await adminService.deleteCatalogCourse(targetCourse.code);
+      setCourses((prev) => prev.filter((c) => c.code !== targetCourse.code));
+      showToast(`Removed ${targetCourse.code} from institutional catalog`, 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to remove course from catalog', 'error');
+    }
   };
 
   // Departments List
   const departments = useMemo(() => {
-    const set = new Set(courses.map((c) => c.department));
+    const set = new Set(courses.map((c) => c.department || 'General Academics').filter(Boolean));
     return Array.from(set).sort();
   }, [courses]);
 
@@ -174,7 +190,7 @@ export function CurriculumPage() {
   const totalCredits = courses.reduce((sum, c) => sum + c.credits, 0);
 
   return (
-    <div className="space-y-6 max-w-6xl pb-12">
+    <div className="space-y-6 max-w-[1440px] w-full pb-12 font-sans">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/90 pb-5">
         <div>
@@ -202,10 +218,11 @@ export function CurriculumPage() {
           </Link>
           <Button
             variant="primary"
+            size="sm"
             onClick={handleOpenCreate}
             icon={<Plus className="w-3.5 h-3.5" />}
           >
-            Add Catalog Course
+            + Add Master Course
           </Button>
         </div>
       </div>
@@ -377,14 +394,14 @@ export function CurriculumPage() {
                         <button
                           onClick={() => handleOpenEdit(c)}
                           className="p-1.5 text-slate-400 hover:text-sky-700 hover:bg-sky-50 rounded-lg transition-colors cursor-pointer"
-                          title="Edit Course Syllabus"
+                          title={`Edit ${c.code} Course Standards`}
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => handleDeleteCourse(c)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                          title="Delete Catalog Course"
+                          title={`Remove ${c.code} from Master Catalog`}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>

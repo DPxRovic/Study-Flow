@@ -4,6 +4,7 @@
  */
 
 import { ScheduledSession, Task, Subject, AvailabilitySlot } from '../types';
+import { toLocalDateKey } from './date';
 
 /**
  * Formats a date and time string ("YYYY-MM-DD", "HH:MM") into ICS iCalendar format "YYYYMMDDTHHMMSS"
@@ -13,6 +14,14 @@ function formatIcsDateTime(dateStr: string, timeStr: string): string {
   const [h, m] = timeStr.split(':');
   const cleanTime = `${(h || '00').padStart(2, '0')}${(m || '00').padStart(2, '0')}00`;
   return `${cleanDate}T${cleanTime}`;
+}
+
+function escapeIcsText(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\r?\n/g, '\\n')
+    .replace(/,/g, '\\,')
+    .replace(/;/g, '\\;');
 }
 
 /**
@@ -29,14 +38,17 @@ export function exportCalendarToICS({
   subjects: Subject[];
   availability: AvailabilitySlot[];
 }): void {
+  const currentTimestamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, 'Z');
   const lines: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//StudyFlow//Academic Planner Fall 2026//EN',
+    'PRODID:-//StudyFlow//Academic Planner//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     'X-WR-CALNAME:StudyFlow Academic Schedule',
-    'X-WR-TIMEZONE:America/New_York',
   ];
 
   // 1. Add Scheduled Study Sessions
@@ -53,11 +65,11 @@ export function exportCalendarToICS({
     lines.push(
       'BEGIN:VEVENT',
       `UID:${s.id}@studyflow.app`,
-      `DTSTAMP:${formatIcsDateTime('2026-10-06', '12:00')}Z`,
+      `DTSTAMP:${currentTimestamp}`,
       `DTSTART:${start}`,
       `DTEND:${end}`,
-      `SUMMARY:${summary.replace(/,/g, '\\,')}`,
-      `DESCRIPTION:${description.replace(/,/g, '\\,')}`,
+      `SUMMARY:${escapeIcsText(summary)}`,
+      `DESCRIPTION:${escapeIcsText(description)}`,
       `STATUS:${s.completed ? 'CONFIRMED' : 'TENTATIVE'}`,
       'END:VEVENT'
     );
@@ -66,7 +78,6 @@ export function exportCalendarToICS({
   // 2. Add Task Deadlines
   tasks.forEach((t) => {
     const subject = subjects.find((sub) => sub.id === t.subjectId);
-    const dueDate = new Date(t.dueDate);
     const dateStr = t.dueDate.split('T')[0];
     const timeStr = t.dueDate.includes('T') ? t.dueDate.split('T')[1].slice(0, 5) : '23:59';
 
@@ -77,12 +88,35 @@ export function exportCalendarToICS({
     lines.push(
       'BEGIN:VEVENT',
       `UID:due_${t.id}@studyflow.app`,
-      `DTSTAMP:${formatIcsDateTime('2026-10-06', '12:00')}Z`,
+      `DTSTAMP:${currentTimestamp}`,
       `DTSTART:${start}`,
       `DTEND:${start}`,
-      `SUMMARY:${summary.replace(/,/g, '\\,')}`,
-      `DESCRIPTION:${description.replace(/,/g, '\\,')}`,
+      `SUMMARY:${escapeIcsText(summary)}`,
+      `DESCRIPTION:${escapeIcsText(description)}`,
       'PRIORITY:1',
+      'END:VEVENT'
+    );
+  });
+
+  // 3. Add recurring weekly class/work/personal commitments and preferred study windows.
+  const today = new Date();
+  availability.forEach((slot) => {
+    const occurrence = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    occurrence.setDate(occurrence.getDate() + ((slot.dayOfWeek - occurrence.getDay() + 7) % 7));
+    const dateStr = toLocalDateKey(occurrence);
+    const typeLabel = slot.type === 'preferred_study'
+      ? 'Preferred Study Window'
+      : slot.type.charAt(0).toUpperCase() + slot.type.slice(1);
+
+    lines.push(
+      'BEGIN:VEVENT',
+      `UID:availability_${slot.id}@studyflow.app`,
+      `DTSTAMP:${currentTimestamp}`,
+      `DTSTART:${formatIcsDateTime(dateStr, slot.startTime)}`,
+      `DTEND:${formatIcsDateTime(dateStr, slot.endTime)}`,
+      'RRULE:FREQ=WEEKLY',
+      `SUMMARY:${escapeIcsText(`[StudyFlow] ${slot.label || typeLabel}`)}`,
+      `DESCRIPTION:${escapeIcsText(`Recurring ${typeLabel.toLowerCase()} from StudyFlow availability.`)}`,
       'END:VEVENT'
     );
   });
@@ -95,7 +129,7 @@ export function exportCalendarToICS({
 
   const link = document.createElement('a');
   link.href = url;
-  link.setAttribute('download', 'StudyFlow_Schedule_Fall2026.ics');
+  link.setAttribute('download', 'StudyFlow_Schedule.ics');
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

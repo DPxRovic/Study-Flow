@@ -105,7 +105,7 @@ StudyFlow implements a deterministic **greedy knapsack algorithm with interval s
 - **Icons**: Lucide React
 - **Animations**: Motion
 - **State Management**: React Context (`PlannerContext`, `AuthContext`, `ToastContext`)
-- **Persistence**: In-memory with rich college seed data (`src/data/mockData.ts`); architected for PostgreSQL / Prisma backend (Phase 2).
+- **Persistence**: PostgreSQL through Prisma; newly registered accounts start with no sample coursework.
 
 ---
 
@@ -114,7 +114,7 @@ StudyFlow implements a deterministic **greedy knapsack algorithm with interval s
 ### Installation & Environment Configuration
 ```bash
 # 1. Install dependencies
-npm install
+bun install
 
 # 2. Configure environment (see .env.example)
 # DATABASE_URL="postgresql://..."
@@ -127,36 +127,36 @@ StudyFlow utilizes a unified full-stack architecture where the Express API serve
 
 ```bash
 # Start unified full-stack development server (Port 3000)
-npm run dev
+bun run dev
 
 # Run TypeScript type check
-npm run lint
+bun run lint
 
 # Build production bundle
-npm run build
+bun run build
 
 # Start production server
-npm run start
+bun run start
 ```
 
 ### Database Operations (PostgreSQL with Prisma ORM)
 ```bash
-npm run db:validate    # Validate Prisma schema
-npm run db:migrate     # Run development database migrations
-npm run db:deploy      # Apply migrations in production deployment
-npm run db:seed        # Seed development accounts and coursework
+bun run db:validate    # Validate Prisma schema
+bun run db:migrate     # Run development database migrations
+bun run db:deploy      # Apply migrations in production deployment
+bun run db:seed        # Seed explicitly requested development data
 ```
 
 ### Test Suites
 ```bash
 # 1. Run Core Academic Backend & Availability Suite (90 tests)
-npm run test:backend
+bun run test:backend
 
 # 2. Run Full-Stack E2E Client-Server Integration Suite (57 tests)
-npm run test:integration
+bun run test:integration
 
 # 3. Run all automated tests
-npm run test
+bun run test
 ```
 
 ---

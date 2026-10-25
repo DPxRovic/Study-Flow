@@ -9,6 +9,13 @@ import { prisma } from '../db/prisma';
 import { ApiError } from '../utils/ApiError';
 import { validateDateFormat } from '../utils/validators';
 
+function localDateKey(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export class ProgressController {
   // GET /api/progress/summary
   // Computes precise real-time academic progress metrics from PostgreSQL records
@@ -70,6 +77,10 @@ export class ProgressController {
 
       // 3. Study Session Metrics
       const validSessions = sessions.filter((s: any) => s.status !== 'CANCELLED');
+      const todayStr = localDateKey();
+      const futureScheduledSessions = validSessions.filter(
+        (s: any) => s.status === 'SCHEDULED' && s.date >= todayStr
+      );
       const totalSessionsCount = validSessions.length;
       const completedSessionsList = validSessions.filter((s: any) => s.completed || s.status === 'COMPLETED');
       const outstandingSessionsList = validSessions.filter((s: any) => !s.completed && s.status === 'SCHEDULED');
@@ -84,6 +95,7 @@ export class ProgressController {
       const subjectWorkload = subjects.map((sub: any) => {
         const subTasks = tasks.filter((t: any) => t.subjectId === sub.id);
         const subSessions = validSessions.filter((s: any) => s.subjectId === sub.id);
+        const subFutureSessions = futureScheduledSessions.filter((s: any) => s.subjectId === sub.id);
 
         const subTotalTasks = subTasks.length;
         const subCompletedTasks = subTasks.filter((t: any) => t.status === 'COMPLETED' || t.remainingHours <= 0).length;
@@ -93,12 +105,12 @@ export class ProgressController {
         const subRemainingHours = Math.round(subTasks.reduce((acc: number, t: any) => acc + (t.status === 'COMPLETED' ? 0 : t.remainingHours), 0) * 10) / 10;
         const subCompletedHours = Math.max(0, Math.round((subEstimatedHours - subRemainingHours) * 10) / 10);
 
-        const subScheduledMinutes = subSessions.reduce((acc: number, s: any) => acc + s.durationMinutes, 0);
+        const subScheduledMinutes = subFutureSessions.reduce((acc: number, s: any) => acc + s.durationMinutes, 0);
         const subScheduledHours = Math.round((subScheduledMinutes / 60) * 10) / 10;
 
         const subLoggedMinutes = subSessions
           .filter((s: any) => s.completed || s.status === 'COMPLETED')
-          .reduce((acc: number, s: any) => acc + (s.actualMinutesLogged || s.durationMinutes), 0);
+          .reduce((acc: number, s: any) => acc + (s.actualMinutesLogged ?? s.durationMinutes), 0);
         const subLoggedHours = Math.round((subLoggedMinutes / 60) * 10) / 10;
 
         // Attention heuristic:

@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { usePlanner } from '../../context/PlannerContext';
-import { INITIAL_CATALOG_COURSES, INITIAL_DIRECTORY_USERS } from '../../data/mockData';
 import { adminService, AdminMetricsResponse } from '../../services/adminService';
 import { AuditLogRecord } from '../../types';
 
@@ -63,14 +62,12 @@ export function AdminDashboardPage() {
     loadDashboardData();
   }, []);
 
-  const totalCatalogCourses = INITIAL_CATALOG_COURSES.length;
-  const activeStudents = metrics?.userBreakdown?.students ?? INITIAL_DIRECTORY_USERS.filter((u) => u.role === 'student' && u.status === 'Active').length;
-  const facultyAdvisors = metrics?.userBreakdown?.advisorsAndTAs ?? INITIAL_DIRECTORY_USERS.filter((u) => u.role === 'advisor' || u.role === 'ta').length;
+  const activeStudents = metrics?.userBreakdown?.students;
   const totalAuditRecords = metrics?.securityAndGovernance?.totalAuditLogs ?? recentAudits.length;
   const publishedAnnouncements = announcements.filter((a) => a.status !== 'draft');
 
   return (
-    <div className="space-y-6 max-w-6xl pb-12 font-sans">
+    <div className="space-y-6 max-w-[1440px] w-full pb-12 font-sans">
       {/* 1. Header & Quick Broadcast Action */}
       <div className="border-b border-slate-200/90 pb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
@@ -122,11 +119,11 @@ export function AdminDashboardPage() {
             <Users className="w-4 h-4 text-sky-600" />
           </div>
           <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
-            {activeStudents.toLocaleString()}
+            {activeStudents !== undefined ? activeStudents.toLocaleString() : '—'}
           </div>
           <div className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded-md inline-flex items-center gap-1 border border-emerald-200/80">
             <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-            <span>94.2% active planner completion</span>
+            <span>{metrics ? `${metrics.academicWorkload.taskCompletionRate}% task completion` : 'Live metric unavailable'}</span>
           </div>
         </div>
 
@@ -137,11 +134,13 @@ export function AdminDashboardPage() {
             <Clock className="w-4 h-4 text-sky-600" />
           </div>
           <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
-            {metrics?.studyExecution?.totalLoggedHours ? `${metrics.studyExecution.totalLoggedHours}h` : '21,490h'}
+            {metrics ? `${metrics.studyExecution.totalLoggedHours}h` : '—'}
           </div>
           <div className="text-[11px] text-slate-600 font-medium flex items-center gap-1">
-            <span className="font-mono font-bold text-slate-800">17.2h</span>
-            <span>/ student weekly average</span>
+            <span className="font-mono font-bold text-slate-800">
+              {metrics ? `${metrics.studyExecution.completedSessions}` : '—'}
+            </span>
+            <span> completed sessions</span>
           </div>
         </div>
 
@@ -159,33 +158,33 @@ export function AdminDashboardPage() {
           </div>
         </div>
 
-        {/* Metric 4: Systemic Cohort Crunch Alert */}
-        <div className="p-4 sm:p-5 surface-base rounded-2xl border border-amber-200/90 bg-amber-50/40 shadow-2xs space-y-1.5">
-          <div className="text-xs text-amber-900 font-bold flex items-center justify-between">
-            <span>Cohort Crunch Alert</span>
-            <AlertTriangle className="w-4 h-4 text-amber-600" />
+        {/* Metric 4: Task completion */}
+        <div className="p-4 sm:p-5 surface-base rounded-2xl border border-slate-200/90 shadow-2xs space-y-1.5">
+          <div className="text-xs text-slate-500 font-bold flex items-center justify-between">
+            <span>Completed Coursework</span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
           </div>
-          <div className="text-2xl font-extrabold font-mono tabular-nums text-amber-950">
-            Week 8 Midterms
+          <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
+            {metrics ? metrics.academicWorkload.completedTasks.toLocaleString() : '—'}
           </div>
-          <div className="text-[11px] text-amber-800 font-bold bg-amber-100/70 px-2 py-0.5 rounded-md inline-block border border-amber-200">
-            CS 201 + MATH 241 overlap
+          <div className="text-[11px] text-slate-600 font-medium">
+            {metrics ? `${metrics.academicWorkload.totalTasksAllocated} tasks tracked` : 'Live metric unavailable'}
           </div>
         </div>
       </div>
 
-      {/* 3. Midterm Crunch Advisory Banner */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-amber-50/80 border border-amber-200 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-2xs">
+      {/* 3. Analytics availability notice */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-sky-50/80 border border-sky-200 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-2xs">
         <div className="flex items-start gap-3.5">
-          <div className="p-2.5 rounded-xl bg-amber-100/80 border border-amber-200 text-amber-800 shrink-0">
-            <AlertTriangle className="w-5 h-5 text-amber-700" />
+          <div className="p-2.5 rounded-xl bg-sky-100/80 border border-sky-200 text-sky-800 shrink-0">
+            <Activity className="w-5 h-5 text-sky-700" />
           </div>
           <div className="space-y-1">
-            <h2 className="text-sm font-extrabold text-amber-950">
-              Departmental Notice: Imminent Week 8 Midterm Workload Spike
+            <h2 className="text-sm font-extrabold text-slate-900">
+              Analytics use persisted institutional records
             </h2>
             <p className="text-xs text-slate-700 leading-relaxed font-medium max-w-3xl">
-              Average scheduled weekly workload surges from 17.2h to 26.4h/student during Week 8 due to overlapping exam deliverables. Library administration has already extended reading rooms to 24-hour operation.
+              Cohort totals and completion rates are loaded from the API. Date-bucketed strain and bottleneck forecasts remain hidden until those aggregates are available from the server.
             </p>
           </div>
         </div>

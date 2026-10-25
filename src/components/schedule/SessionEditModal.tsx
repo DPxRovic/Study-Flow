@@ -19,6 +19,7 @@ import { usePlanner } from '../../context/PlannerContext';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { timeToMinutes, minutesToTime } from '../../utils/scheduleGenerator';
+import { toLocalDateKey } from '../../utils/date';
 
 export interface SessionEditModalProps {
   isOpen: boolean;
@@ -45,10 +46,10 @@ export function SessionEditModal({
   defaultTaskId,
   initialTask,
 }: SessionEditModalProps) {
-  const { tasks, subjects, addSession, updateSession } = usePlanner();
+  const { tasks, subjects, addSession, updateSession, setSessionStatus } = usePlanner();
 
   const activeSession = sessionToEdit || session;
-  const effectiveDate = initialDate || defaultDate || '2026-10-06';
+  const effectiveDate = initialDate || defaultDate || toLocalDateKey();
   const effectiveStartTime = initialStartTime || defaultStartTime || '14:00';
   const effectiveTaskId = initialTask?.id || defaultTaskId;
 
@@ -115,7 +116,7 @@ export function SessionEditModal({
     return minutesToTime(endMins);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const newErrors: Record<string, string> = {};
 
@@ -134,21 +135,22 @@ export function SessionEditModal({
 
     const endTime = calculateEndTime();
 
-    if (sessionToEdit) {
-      updateSession(sessionToEdit.id, {
+    if (activeSession) {
+      const updated = await updateSession(activeSession.id, {
         subjectId,
         taskId,
         date,
         startTime,
         endTime,
         durationMinutes,
-        status,
-        completed: status === 'completed',
         locked,
         notes: notes.trim(),
       });
+      if (updated && updated.status !== status) {
+        await setSessionStatus(activeSession.id, status);
+      }
     } else {
-      addSession({
+      const created = await addSession({
         subjectId,
         taskId,
         date,
@@ -160,6 +162,9 @@ export function SessionEditModal({
         locked,
         notes: notes.trim(),
       });
+      if (created && status !== 'scheduled') {
+        await setSessionStatus(created.id, status);
+      }
     }
 
     onClose();
@@ -172,7 +177,7 @@ export function SessionEditModal({
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
           <div>
             <h2 className="text-base font-extrabold text-slate-900">
-              {sessionToEdit ? 'Edit Scheduled Study Block' : 'Schedule New Study Block'}
+              {activeSession ? 'Edit Scheduled Study Block' : 'Schedule New Study Block'}
             </h2>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
               Allocate dedicated study hours for coursework.
@@ -188,6 +193,35 @@ export function SessionEditModal({
         </div>
 
         {/* Form Body */}
+        {subjects.length === 0 ? (
+          <div className="p-8 text-center space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-sky-50 border border-sky-100 text-sky-700 flex items-center justify-center mx-auto">
+              <BookOpen className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-extrabold text-slate-900">Create a course first</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                Study sessions need an enrolled course and a task. Add your first course, then create an assignment or exam before scheduling a block.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2">
+              <Button variant="ghost" size="sm" type="button" onClick={onClose}>
+                Close
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                type="button"
+                onClick={() => {
+                  onClose();
+                  window.location.assign('/subjects');
+                }}
+              >
+                Add a Course
+              </Button>
+            </div>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
           {/* Subject & Task */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -344,10 +378,11 @@ export function SessionEditModal({
               Cancel
             </Button>
             <Button variant="primary" size="sm" type="submit">
-              {sessionToEdit ? 'Save Changes' : 'Schedule Study Block'}
+              {activeSession ? 'Save Changes' : 'Schedule Study Block'}
             </Button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

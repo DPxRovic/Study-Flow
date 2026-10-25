@@ -291,6 +291,11 @@ export class TaskController {
       }
       if (estimatedHours !== undefined) {
         updates.estimatedHours = validateNumber(estimatedHours, 'Estimated hours', 0.25, 100);
+        if (remainingHours === undefined && updates.estimatedHours < task.remainingHours) {
+          throw ApiError.badRequest(
+            'Estimated hours cannot be lower than the task remaining hours unless remainingHours is updated too'
+          );
+        }
       }
       if (remainingHours !== undefined) {
         const targetEstimated = updates.estimatedHours || task.estimatedHours;

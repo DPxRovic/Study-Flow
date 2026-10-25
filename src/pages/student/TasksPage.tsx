@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Plus,
   Search,
@@ -27,6 +28,7 @@ import { Badge } from '../../components/ui/Badge';
 import { PriorityBadge } from '../../components/ui/PriorityBadge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { usePlanner } from '../../context/PlannerContext';
+import { useAuth } from '../../context/AuthContext';
 import { Task, TaskPriority, TaskType } from '../../types';
 import { SUBJECT_CATEGORY_STYLES } from '../../theme/tokens';
 import { TaskModal } from '../../components/tasks/TaskModal';
@@ -35,6 +37,8 @@ import { TaskDetailModal } from '../../components/tasks/TaskDetailModal';
 type SortOption = 'dueDateAsc' | 'dueDateDesc' | 'priorityDesc' | 'hoursDesc' | 'hoursAsc';
 
 export function TasksPage() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const {
     tasks,
     subjects,
@@ -179,15 +183,21 @@ export function TasksPage() {
     updateTask(taskId, { subtasks: updatedSubtasks });
   };
 
+  const handleDeleteTask = (taskId: string) => {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!window.confirm(`Delete "${task?.title || 'this assignment'}" and its scheduled study blocks?`)) return;
+    deleteTask(taskId);
+  };
+
   return (
-    <div className="space-y-6 max-w-5xl pb-16">
+    <div className="space-y-6 max-w-[1440px] w-full pb-16 font-sans">
       {/* =========================================================================
           1. HEADER & ACTION STRIP
          ========================================================================= */}
       <div className="border-b border-slate-200/80 pb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <div className="text-xs text-slate-500 font-semibold mb-1">
-            Curriculum Work Queue · Fall 2026 Term
+            Curriculum Work Queue · {user?.term || 'Current Term'}
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
             Assignments & Tasks
@@ -201,6 +211,7 @@ export function TasksPage() {
           <Button
             variant="primary"
             onClick={handleOpenAdd}
+            disabled={subjects.length === 0}
             icon={<Plus className="w-4 h-4" />}
           >
             Add Assignment
@@ -493,10 +504,22 @@ export function TasksPage() {
       {filteredTasks.length === 0 ? (
         <EmptyState
           icon={<CheckSquare className="w-6 h-6 text-sky-600" />}
-          title="No deliverables found"
-          description="Try adjusting your course filter or search keywords, or record a new assignment from your syllabus."
-          actionLabel="Add New Assignment"
-          onAction={handleOpenAdd}
+          title={tasks.length === 0 ? 'No tasks yet — add an assignment or exam' : 'No deliverables match these filters'}
+          description={
+            subjects.length === 0
+              ? 'Add your first enrolled course before recording assignments, exams, readings, or project deadlines.'
+              : tasks.length === 0
+              ? 'Record your first deadline so StudyFlow can calculate workload and build a study plan.'
+              : 'Try adjusting your course, status, priority, or search filters.'
+          }
+          actionLabel={subjects.length === 0 ? 'Add Your First Course' : tasks.length === 0 ? 'Add Assignment or Exam' : undefined}
+          onAction={
+            subjects.length === 0
+              ? () => navigate('/subjects')
+              : tasks.length === 0
+              ? handleOpenAdd
+              : undefined
+          }
         />
       ) : (
         <div className="surface-base rounded-2xl shadow-2xs divide-y divide-slate-100 overflow-hidden">
@@ -712,7 +735,7 @@ export function TasksPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => deleteTask(task.id)}
+                        onClick={() => handleDeleteTask(task.id)}
                         className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
                         title="Delete assignment"
                       >
@@ -825,7 +848,7 @@ export function TasksPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => deleteTask(task.id)}
+                        onClick={() => handleDeleteTask(task.id)}
                         className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -872,7 +895,7 @@ export function TasksPage() {
           handleOpenEdit(task);
         }}
         onDelete={(taskId) => {
-          deleteTask(taskId);
+          handleDeleteTask(taskId);
           setSelectedTask(null);
         }}
         onToggleComplete={(taskId) => {

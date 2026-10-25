@@ -9,7 +9,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { ArrowRight, UserCheck, Shield, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { ArrowRight, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -66,7 +66,10 @@ export function LoginPage() {
       showToast(`Welcome back, ${result.user?.name || 'Student'}!`, 'success');
 
       // Check if user was redirected from a protected route
-      const destination = (location.state as any)?.from?.pathname;
+      const previousLocation = (location.state as any)?.from;
+      const destination = previousLocation
+        ? `${previousLocation.pathname || ''}${previousLocation.search || ''}${previousLocation.hash || ''}`
+        : '';
       if (destination && destination !== '/login' && destination !== '/register') {
         navigate(destination, { replace: true });
       } else {
@@ -77,13 +80,6 @@ export function LoginPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleQuickLogin = (demoEmail: string, demoPass: string) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-    setEmailError(null);
-    setFormError(null);
   };
 
   return (
@@ -173,55 +169,6 @@ export function LoginPage() {
           </Button>
         </div>
       </form>
-
-      {/* Demo Credentials Quick-Fill helper */}
-      <div className="pt-3 border-t border-slate-100 space-y-2">
-        <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium">
-          <span>Quick Demo Access</span>
-          <span className="font-mono text-sky-700 font-bold">1-Click Launch</span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={async () => {
-              setLoading(true);
-              const res = await login('m.lin@university.edu', 'studyflow2026');
-              setLoading(false);
-              if (res.success) {
-                showToast('Welcome back, Maya!', 'success');
-                navigate('/dashboard');
-              }
-            }}
-            className="p-2.5 rounded-xl border border-sky-200/90 hover:border-sky-400 bg-sky-50/60 hover:bg-sky-50 text-left transition-all cursor-pointer group space-y-0.5"
-          >
-            <div className="text-xs font-bold text-sky-900 flex items-center gap-1.5">
-              <UserCheck className="w-3.5 h-3.5 text-sky-600 group-hover:scale-110 transition-transform" />
-              <span>Maya (Student)</span>
-            </div>
-            <div className="text-[10px] text-slate-500 font-mono truncate">m.lin@university.edu</div>
-          </button>
-
-          <button
-            type="button"
-            onClick={async () => {
-              setLoading(true);
-              const res = await login('e.vance@university.edu', 'admin2026');
-              setLoading(false);
-              if (res.success) {
-                showToast('Welcome back, Dean Vance!', 'success');
-                navigate('/admin');
-              }
-            }}
-            className="p-2.5 rounded-xl border border-amber-200/90 hover:border-amber-400 bg-amber-50/60 hover:bg-amber-50 text-left transition-all cursor-pointer group space-y-0.5"
-          >
-            <div className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-              <Shield className="w-3.5 h-3.5 text-amber-600 group-hover:scale-110 transition-transform" />
-              <span>Dean Vance (Admin)</span>
-            </div>
-            <div className="text-[10px] text-slate-500 font-mono truncate">e.vance@university.edu</div>
-          </button>
-        </div>
-      </div>
 
       {/* Register Link */}
       <div className="text-center text-xs text-slate-600 pt-1 font-medium">
