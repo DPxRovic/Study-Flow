@@ -29,6 +29,10 @@ export function GuestRoute({ children }: GuestRouteProps) {
   }
 
   if (isAuthenticated) {
+    if (location.pathname === '/register') {
+      return <Navigate to="/subjects" replace />;
+    }
+
     // If returning from a redirected page, redirect there, otherwise go to their home workspace
     const from = (location.state as any)?.from?.pathname;
     if (from && from !== '/login' && from !== '/register') {

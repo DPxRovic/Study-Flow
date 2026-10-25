@@ -84,7 +84,7 @@ export function RegisterPage() {
       }
 
       showToast(`Account created! Welcome to StudyFlow, ${name.trim()}!`, 'success');
-      navigate('/dashboard', { replace: true });
+      navigate('/subjects', { replace: true });
     } catch {
       setFormError('An unexpected error occurred during account creation. Please try again.');
     } finally {

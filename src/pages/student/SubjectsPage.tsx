@@ -165,9 +165,9 @@ export function SubjectsPage() {
       {subjects.length === 0 ? (
         <EmptyState
           icon={<BookOpen className="w-6 h-6 text-sky-600" />}
-          title="No courses enrolled"
+          title="Take your first subjects"
           description="Enroll in your semester courses to configure study targets and plan your academic week."
-          actionLabel="Enroll First Subject"
+          actionLabel="Enroll Subjects"
           onAction={handleOpenAdd}
         />
       ) : (

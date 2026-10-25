@@ -172,7 +172,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         adminService.getAnnouncements().catch(() => ({ success: true, data: INITIAL_ANNOUNCEMENTS })),
       ]);
 
-      setSubjects(fetchedSubjects.length > 0 ? fetchedSubjects : INITIAL_SUBJECTS);
+      setSubjects(fetchedSubjects);
       setTasks(fetchedTasks.length > 0 ? fetchedTasks : INITIAL_TASKS);
       setSessions(fetchedSessions.length > 0 ? fetchedSessions : INITIAL_ALL_SESSIONS);
       setAvailability(fetchedAvailability.length > 0 ? fetchedAvailability : INITIAL_AVAILABILITY);
