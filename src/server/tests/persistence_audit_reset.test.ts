@@ -7,6 +7,7 @@ import http from 'http';
 import express from 'express';
 import dotenv from 'dotenv';
 dotenv.config();
+process.env.NODE_ENV = 'test';
 
 import apiRoutes from '../routes';
 import { errorHandler } from '../middleware/errorHandler';

@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "studyflow",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -17,7 +17,8 @@
     "test:backend": "tsx src/server/tests/backend.test.ts",
     "test:integration": "tsx src/server/tests/integration.test.ts",
     "test:reset": "tsx src/server/tests/persistence_audit_reset.test.ts",
-    "test": "tsx src/server/tests/backend.test.ts && tsx src/server/tests/integration.test.ts && tsx src/server/tests/persistence_audit_reset.test.ts"
+    "test:email-pipeline": "tsx src/server/tests/email_reset_pipeline.test.ts",
+    "test": "tsx src/server/tests/backend.test.ts && tsx src/server/tests/integration.test.ts && tsx src/server/tests/persistence_audit_reset.test.ts && tsx src/server/tests/email_reset_pipeline.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

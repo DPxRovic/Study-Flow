@@ -5,7 +5,7 @@
 
 // 1. Load env FIRST (before any other imports)
 import dotenv from 'dotenv';
-dotenv.config();
+dotenv.config({ override: true });
 
 if (process.argv.includes('--production')) {
   process.env.NODE_ENV = 'production';
@@ -14,6 +14,17 @@ if (process.argv.includes('--production')) {
 // 2. Now safely import everything else
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
+
+// Process-level resilience: Prevent unexpected external API rejections or uncaught errors from crashing the Node.js process
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[StudyFlow Server] Unhandled Promise Rejection (process kept alive):', reason?.message || reason);
+});
+
+process.on('uncaughtException', (err: any) => {
+  console.error('[StudyFlow Server] Uncaught Exception (process kept alive):', err?.message || err);
+});
+
+let serverInstance: any = null;
 
 async function start() {
   const { default: apiRoutes } = await import('./src/server/routes');
@@ -53,11 +64,25 @@ async function start() {
     app.use(vite.middlewares);
   }
 
-  app.listen(config.port, config.host, () => {
-    console.log(`[StudyFlow] Academic server running on ${config.host}:${config.port}`);
-    console.log(`→ http://localhost:${config.port}`);
-  });
+  if (!serverInstance) {
+    serverInstance = app.listen(config.port, config.host, () => {
+      console.log(`[StudyFlow] Academic server running on ${config.host}:${config.port}`);
+      console.log(`→ http://localhost:${config.port}`);
+    });
+  }
 }
+
+const shutdown = () => {
+  if (serverInstance) {
+    serverInstance.close(() => {
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
+};
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 if (process.env.NODE_ENV !== 'test') {
   start().catch((err) => {

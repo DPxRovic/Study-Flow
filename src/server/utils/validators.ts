@@ -102,6 +102,9 @@ export function validatePassword(password: string): string {
   if (password.length < 6) {
     throw ApiError.badRequest('Password must be at least 6 characters long');
   }
+  if (password.length > 128) {
+    throw ApiError.badRequest('Password cannot exceed 128 characters');
+  }
   if (Buffer.byteLength(password, 'utf8') > 72) {
     throw ApiError.badRequest('Password cannot exceed 72 UTF-8 bytes');
   }
@@ -276,12 +279,13 @@ export function validateIsoDateTime(dateTime: string, fieldName: string): Date {
   if (!dateTime || typeof dateTime !== 'string') {
     throw ApiError.badRequest(`${fieldName} must be a valid ISO date-time string`);
   }
+  const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
   const isoDateTimeRegex = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,3})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$/;
-  if (!isoDateTimeRegex.test(dateTime)) {
+  if (!isoDateTimeRegex.test(dateTime) && !isoDateRegex.test(dateTime)) {
     throw ApiError.badRequest(`${fieldName} must use ISO 8601 date-time format`);
   }
   validateDateFormat(dateTime.slice(0, 10), fieldName);
-  const parsed = new Date(dateTime);
+  const parsed = new Date(dateTime.length === 10 ? `${dateTime}T23:59:59.999Z` : dateTime);
   if (isNaN(parsed.getTime())) {
     throw ApiError.badRequest(`${fieldName} contains an invalid date value`);
   }
