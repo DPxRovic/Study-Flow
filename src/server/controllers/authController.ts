@@ -247,9 +247,14 @@ export class AuthController {
    * POST /api/auth/forgot-password
    */
   static async forgotPassword(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    const t0 = performance.now();
     try {
       const { email } = req.body;
       const validEmail = validateEmail(email);
+
+      // Safe non-sensitive log: only logs domain, never full credentials
+      const domainPart = validEmail.includes('@') ? validEmail.split('@')[1] : 'unknown';
+      console.log(`[ForgotPassword] [T0] Request received for domain: @${domainPart}`);
 
       // Generic non-revealing response to protect user privacy & prevent account enumeration
       const genericResponse = {
@@ -257,13 +262,20 @@ export class AuthController {
         message: 'If an account exists with this university email, a 6-digit verification code has been sent.',
       };
 
+      const tLookupStart = performance.now();
       const user = await prisma.user.findUnique({
         where: { email: validEmail },
       });
+      const tLookupEnd = performance.now();
+      console.log(
+        `[ForgotPassword] [T1] Database lookup completed in ${(tLookupEnd - tLookupStart).toFixed(1)}ms (User found: ${Boolean(user)})`
+      );
 
       if (!user) {
         // Equalize execution time with dummy hash
         hashWithSecret('000000');
+        const tTotal = performance.now() - t0;
+        console.log(`[ForgotPassword] [T5] Anti-enumeration response returned in ${tTotal.toFixed(1)}ms.`);
         return res.json(genericResponse);
       }
 
@@ -272,35 +284,48 @@ export class AuthController {
       const codeHash = hashWithSecret(numericCode);
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes expiry
 
-      // Invalidate any existing unused reset requests for this user
-      await prisma.passwordResetRequest.updateMany({
-        where: {
-          userId: user.id,
-          usedAt: null,
-        },
-        data: {
-          usedAt: new Date(),
-        },
-      });
+      // Atomic batch: invalidate existing unused requests and persist new request in a single round-trip
+      const tPersistStart = performance.now();
+      await prisma.$transaction([
+        prisma.passwordResetRequest.updateMany({
+          where: {
+            userId: user.id,
+            usedAt: null,
+          },
+          data: {
+            usedAt: new Date(),
+          },
+        }),
+        prisma.passwordResetRequest.create({
+          data: {
+            userId: user.id,
+            codeHash,
+            expiresAt,
+            maxAttempts: 5,
+            attemptsCount: 0,
+            ipAddress: req.ip || null,
+          },
+        }),
+      ]);
+      const tPersistEnd = performance.now();
+      console.log(
+        `[ForgotPassword] [T2] Reset code generated and persisted in ${(tPersistEnd - tPersistStart).toFixed(1)}ms`
+      );
 
-      // Persist the hashed verification request in PostgreSQL
-      await prisma.passwordResetRequest.create({
-        data: {
-          userId: user.id,
-          codeHash,
-          expiresAt,
-          maxAttempts: 5,
-          attemptsCount: 0,
-          ipAddress: req.ip || null,
-        },
-      });
+      // Send the code through Resend email service using published template
+      const tResendStart = performance.now();
+      console.log(`[ForgotPassword] [T3] Resend API request started (template: password-reset)`);
 
-      // Send the code through Resend email service
       const emailResult = await emailService.sendPasswordResetCode({
         to: user.email,
         name: user.name,
         code: numericCode,
       });
+
+      const tResendEnd = performance.now();
+      console.log(
+        `[ForgotPassword] [T4] Resend API request finished in ${(tResendEnd - tResendStart).toFixed(1)}ms (Success: ${emailResult.success}, ProviderId: ${emailResult.messageId || 'none'})`
+      );
 
       if (!emailResult.success) {
         // Record tamper-evident audit event for failed email delivery
@@ -318,9 +343,20 @@ export class AuthController {
         // Strictly refused and deactivated in production environments
         const isDevFallbackEnabled =
           process.env.NODE_ENV !== 'production' &&
-          process.env.ENABLE_DEV_RESET_FALLBACK === 'true';
+          (process.env.ENABLE_DEV_RESET_FALLBACK === 'true' || config.enableDevResetFallback);
 
         if (isDevFallbackEnabled) {
+          // Log tamper-evident audit event for development fallback activation
+          await logSecurityEvent({
+            actorId: user.id,
+            actorEmail: user.email,
+            actorName: user.name,
+            action: 'PASSWORD_RESET_DEV_FALLBACK_ACTIVE',
+            targetId: user.id,
+            details: `Development demo fallback active. Email delivery was restricted (${emailResult.error}). Reset code generated and printed to server console.`,
+            ipAddress: req.ip,
+          });
+
           console.log('\n========================================================================');
           console.log('   [STUDYFLOW DEV MODE] PASSWORD RESET CODE GENERATED FOR DEMO          ');
           console.log('========================================================================');
@@ -328,16 +364,35 @@ export class AuthController {
           console.log(`6-Digit Code:  ${numericCode}`);
           console.log(`Expires:       in 10 minutes`);
           console.log(`Database:      Persisted as HMAC-SHA256 in PostgreSQL`);
-          console.log(`Resend Notice: Real delivery was restricted (${emailResult.error})`);
+          console.log(`Resend Notice: Real email delivery was not performed (${emailResult.error})`);
           console.log('========================================================================\n');
 
-          return res.json({
+          const responsePayload: {
+            success: boolean;
+            message: string;
+            devMode: boolean;
+            devNotice: string;
+            devCode?: string;
+          } = {
             success: true,
-            message: 'If an account exists with this university email, a 6-digit verification code has been sent.',
+            message: 'If an account exists with this university email, a 6-digit verification code has been generated.',
             devMode: true,
-            devNotice: 'Development Demonstration Mode: verification code printed to server terminal.',
-            devCode: numericCode,
-          });
+            devNotice: 'Development Demonstration Mode active. Real email delivery was not performed.',
+          };
+
+          // NEVER send the code to browser responses by default!
+          // ONLY attach devCode if SHOW_DEV_RESET_CODE_IN_UI=true is EXPLICITLY set AND NOT in production
+          const allowDevCodeInBrowser =
+            process.env.NODE_ENV !== 'production' &&
+            (process.env.SHOW_DEV_RESET_CODE_IN_UI === 'true' || config.showDevResetCodeInUi);
+
+          if (allowDevCodeInBrowser) {
+            responsePayload.devCode = numericCode;
+          }
+
+          const tTotal = performance.now() - t0;
+          console.log(`[ForgotPassword] [T5] Total processing completed in ${tTotal.toFixed(1)}ms. Returning HTTP response.`);
+          return res.json(responsePayload);
         }
 
         // Production / Standard Mode: Log concise diagnostic without leaking secrets or codes
@@ -362,6 +417,8 @@ export class AuthController {
         ipAddress: req.ip,
       });
 
+      const tTotal = performance.now() - t0;
+      console.log(`[ForgotPassword] [T5] Total processing completed in ${tTotal.toFixed(1)}ms. Returning HTTP response.`);
       return res.json(genericResponse);
     } catch (err) {
       next(err);

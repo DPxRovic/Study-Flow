@@ -531,6 +531,17 @@ export const INITIAL_CATALOG_COURSES: CatalogCourse[] = [
 
 export const INITIAL_DIRECTORY_USERS: DirectoryUser[] = [
   {
+    id: 'u_rovic',
+    name: 'Rovic Rosales',
+    email: 'rovicrosales14@gmail.com',
+    role: 'student',
+    major: 'Computer Science',
+    enrolledCourses: 4,
+    status: 'Active',
+    lastActive: 'Just now',
+    joinedDate: 'Jan 2025',
+  },
+  {
     id: 'u_1',
     name: 'Maya Lin',
     email: 'm.lin@university.edu',

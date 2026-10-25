@@ -24,6 +24,7 @@ export interface EmailServiceResult {
 
 // In-memory capture for automated testing only (gated strictly to non-production environments)
 const testDeliveredCodes = new Map<string, { code: string; timestamp: number }>();
+let lastSendPayload: any = null;
 
 /**
  * Builds the production-ready responsive HTML template for StudyFlow password reset verification
@@ -265,12 +266,29 @@ export const emailService = {
     const apiKey = process.env.RESEND_API_KEY?.trim();
     const fromAddress = this.getFormattedFromAddress();
 
+    // Build official Resend SDK template-send payload
+    // Mutually exclusive: strictly omits html, text, and react when template is specified
+    const templateId = process.env.RESEND_TEMPLATE_ID?.trim() || 'password-reset';
+    const sendPayload: any = {
+      from: fromAddress,
+      to: [to],
+      subject: `Your StudyFlow password reset code: ${code}`,
+      template: {
+        id: templateId,
+        variables: {
+          RESET_CODE: code,
+          EXPIRY_MINUTES: expirationMinutes,
+        },
+      },
+    };
+
     // Store in test storage strictly for automated unit tests in test/dev environments
     if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development') {
       testDeliveredCodes.set(to.toLowerCase(), {
         code,
         timestamp: Date.now(),
       });
+      lastSendPayload = JSON.parse(JSON.stringify(sendPayload));
     }
 
     // In automated unit tests, allow controlled simulation of provider responses
@@ -308,27 +326,30 @@ export const emailService = {
       };
     }
 
-    // 2. Prepare branded templates (retains collegiate StudyFlow styling)
-    const emailHtml = renderPasswordResetHtml({ name, code, expirationMinutes });
-    const emailText = renderPasswordResetText({ name, code, expirationMinutes });
+    // 3. Dispatch through official Resend SDK with responsive AbortController timeout (5000ms)
+    // Safely intercept Resend SDK's internal console.error logger to convert provider 403/validation rejections
+    // into standard diagnostic warnings, preventing false unhandled exception alerts in server watchers.
+    const originalConsoleError = console.error;
+    console.error = (...args: any[]) => {
+      if (typeof args[0] === 'string' && args[0].includes('[Resend API Error]')) {
+        console.warn('[EmailService Diagnostic] Provider rejection handled safely:', args[1]?.error?.message || args[1] || args[0]);
+        return;
+      }
+      originalConsoleError.apply(console, args);
+    };
 
-    // 3. Dispatch through official Resend SDK with safe 8-second timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, 5000);
+
     try {
       const resend = new Resend(apiKey);
 
-      const timeoutPromise = new Promise<{ data: null; error: any }>((_, reject) => {
-        setTimeout(() => reject(new Error('Resend dispatch timed out after 8000ms')), 8000);
+      const { data, error } = await resend.emails.send(sendPayload, {
+        signal: controller.signal,
       });
-
-      const sendPromise = resend.emails.send({
-        from: fromAddress,
-        to: [to],
-        subject: `Your StudyFlow password reset code: ${code}`,
-        html: emailHtml,
-        text: emailText,
-      });
-
-      const { data, error } = await Promise.race([sendPromise, timeoutPromise]);
+      clearTimeout(timeoutId);
 
       if (error) {
         const statusCode = (error as any).statusCode || (error as any).status || 403;
@@ -369,12 +390,19 @@ export const emailService = {
         messageId: data?.id,
       };
     } catch (err: any) {
-      console.warn('[EmailService] Network or timeout error during Resend SDK dispatch:', err?.message || 'Unknown network error');
+      clearTimeout(timeoutId);
+      const isAbort = err?.name === 'AbortError' || err?.message?.toLowerCase().includes('abort');
+      const errorMessage = isAbort
+        ? 'Resend API dispatch timed out after 5000ms.'
+        : err?.message || 'Unexpected failure while sending reset email.';
+      console.warn('[EmailService] Dispatch error:', errorMessage);
       return {
         success: false,
         statusCode: 503,
-        error: err?.message || 'Unexpected failure while sending reset email.',
+        error: errorMessage,
       };
+    } finally {
+      console.error = originalConsoleError;
     }
   },
 
@@ -391,12 +419,25 @@ export const emailService = {
   },
 
   /**
+   * Helper for automated test verification in test environments.
+   * Gated strictly so it is unavailable in production.
+   */
+  getLastSendPayload(): any {
+    if (process.env.NODE_ENV === 'production') {
+      return null;
+    }
+    return lastSendPayload;
+  },
+
+  /**
    * Clear test delivery cache
    */
   clearTestDeliveredCodes(): void {
     testDeliveredCodes.clear();
+    lastSendPayload = null;
   },
 };
 
 export const getTestDeliveredCode = emailService.getTestDeliveredCode.bind(emailService);
 export const clearTestDeliveredCodes = emailService.clearTestDeliveredCodes.bind(emailService);
+export const getLastSendPayload = emailService.getLastSendPayload.bind(emailService);

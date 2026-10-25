@@ -15,7 +15,7 @@ import { securityHeaders, corsMiddleware } from '../middleware/security';
 import { prisma } from '../db/prisma';
 import { apiClient, ApiClientError } from '../../services/apiClient';
 import { authService } from '../../services/authService';
-import { emailService, getTestDeliveredCode } from '../services/emailService';
+import { emailService, getTestDeliveredCode, getLastSendPayload } from '../services/emailService';
 
 async function runEmailResetPipelineSuite() {
   console.log('========================================================================');
@@ -86,9 +86,9 @@ async function runEmailResetPipelineSuite() {
     );
 
     // -----------------------------------------------------------------
-    // TEST 3: Branded Email Template Contains Code, Not Generic Test String
+    // TEST 3: Resend Published Template Send & Variable Verification
     // -----------------------------------------------------------------
-    console.log('\n--- 3. BRANDED TEMPLATE VERIFICATION ---');
+    console.log('\n--- 3. RESEND TEMPLATE & VARIABLE INTEGRITY ---');
     const testCode = '742918';
     const emailResult = await emailService.sendPasswordResetCode({
       to: testAccountEmail,
@@ -100,6 +100,17 @@ async function runEmailResetPipelineSuite() {
     assert(emailResult.success === true, 'Email dispatch completes with valid parameters');
     const deliveredCode = getTestDeliveredCode(testAccountEmail);
     assert(deliveredCode === testCode, 'Correct 6-digit code was dispatched to intended recipient');
+
+    const lastPayload = getLastSendPayload();
+    assert(Boolean(lastPayload), 'Last Resend dispatch payload was captured');
+    assert(lastPayload?.template?.id === 'password-reset', 'Send payload references published template alias "password-reset"');
+    assert(lastPayload?.template?.variables?.RESET_CODE === testCode, 'Template variables supply exact RESET_CODE value');
+    assert(lastPayload?.template?.variables?.EXPIRY_MINUTES === 10, 'Template variables supply exact EXPIRY_MINUTES value');
+    assert(
+      !lastPayload?.html && !lastPayload?.text && !lastPayload?.react,
+      'Mutually exclusive: send payload omits html/text/react when template is specified'
+    );
+    assert(Array.isArray(lastPayload?.to) && lastPayload?.to[0] === testAccountEmail, 'Recipient email preserved in send payload');
 
     // -----------------------------------------------------------------
     // TEST 4: Forgot Password API Endpoint Response Never Leaks Verification Code
@@ -238,16 +249,43 @@ async function runEmailResetPipelineSuite() {
     console.log('\n--- 11. SAFE DEVELOPMENT-ONLY DEMONSTRATION MODE ---');
     process.env.SIMULATE_RESEND_ERROR = '403_SANDBOX'; // Real delivery is blocked by sandbox
     process.env.ENABLE_DEV_RESET_FALLBACK = 'true';    // But development demo mode is enabled
+    delete process.env.SHOW_DEV_RESET_CODE_IN_UI;     // Code display in UI is DISABLED by default
 
+    // Subtest A: Default dev fallback (Code hidden from HTTP response, available in terminal/log)
     const devFallbackRes = await authService.forgotPassword(testAccountEmail);
     assert(devFallbackRes.success === true, 'Dev mode returns success when ENABLE_DEV_RESET_FALLBACK=true');
     assert(devFallbackRes.devMode === true, 'Dev mode flag is present in response');
-    assert(Boolean(devFallbackRes.devCode && /^\d{6}$/.test(devFallbackRes.devCode)), 'Dev mode returns valid 6-digit demo code');
+    assert(devFallbackRes.devCode === undefined, 'Reset code is NEVER exposed in HTTP response by default');
+    assert(
+      !devFallbackRes.message.includes('sent') && !devFallbackRes.message.includes('dispatched'),
+      'Response does NOT falsely claim an email was dispatched'
+    );
 
-    // Verify the devCode can actually be verified and completes reset in PostgreSQL
-    const devVerifyRes = await authService.verifyResetCode(testAccountEmail, devFallbackRes.devCode!);
-    assert(devVerifyRes.success === true, 'Dev mode generated code successfully verifies against database hash');
+    // Verify audit log for development fallback
+    const fallbackAudit = await prisma.auditLog.findFirst({
+      where: {
+        targetId: testUserId,
+        action: 'PASSWORD_RESET_DEV_FALLBACK_ACTIVE',
+      },
+      orderBy: { timestamp: 'desc' },
+    });
+    assert(fallbackAudit !== null, 'PASSWORD_RESET_DEV_FALLBACK_ACTIVE logged in audit table');
+
+    // Retrieve generated code from server test hook (simulating looking at server terminal)
+    const terminalCode = getTestDeliveredCode(testAccountEmail);
+    assert(Boolean(terminalCode && /^\d{6}$/.test(terminalCode)), 'Server-side generated code exists and is 6 digits');
+
+    // Verify that manual entry of the server-logged code successfully verifies in database
+    const devVerifyRes = await authService.verifyResetCode(testAccountEmail, terminalCode!);
+    assert(devVerifyRes.success === true, 'Server-logged code successfully verifies against database hash');
     assert(Boolean(devVerifyRes.resetToken), 'Dev mode code verification returns valid resetToken');
+
+    // Subtest B: Explicit Developer UI Toggle (SHOW_DEV_RESET_CODE_IN_UI=true)
+    process.env.SHOW_DEV_RESET_CODE_IN_UI = 'true';
+    const devUiRes = await authService.forgotPassword(testAccountEmail);
+    assert(devUiRes.success === true, 'Explicit UI mode returns success');
+    assert(Boolean(devUiRes.devCode && /^\d{6}$/.test(devUiRes.devCode)), 'devCode only attached when SHOW_DEV_RESET_CODE_IN_UI=true');
+    delete process.env.SHOW_DEV_RESET_CODE_IN_UI;
 
     // -----------------------------------------------------------------
     // TEST 12: Production Rejection of Development Mock Mode
@@ -255,6 +293,7 @@ async function runEmailResetPipelineSuite() {
     console.log('\n--- 12. PRODUCTION STRICT REJECTION OF DEV FALLBACK ---');
     process.env.NODE_ENV = 'production';
     process.env.ENABLE_DEV_RESET_FALLBACK = 'true'; // Set to true, but NODE_ENV is production!
+    process.env.SHOW_DEV_RESET_CODE_IN_UI = 'true'; // Even if UI display is set to true!
     process.env.SIMULATE_RESEND_ERROR = '403_SANDBOX';
 
     let prodStrictlyRejected = false;
@@ -265,10 +304,11 @@ async function runEmailResetPipelineSuite() {
         prodStrictlyRejected = true;
       }
     }
-    assert(prodStrictlyRejected, 'Production mode strictly rejects dev fallback even when env var is set');
+    assert(prodStrictlyRejected, 'Production mode strictly rejects dev fallback and never exposes code even when env vars are set');
     process.env.NODE_ENV = 'test'; // Restore test env
     delete process.env.SIMULATE_RESEND_ERROR;
     delete process.env.ENABLE_DEV_RESET_FALLBACK;
+    delete process.env.SHOW_DEV_RESET_CODE_IN_UI;
 
     // -----------------------------------------------------------------
     // TEST 13: Expired Verification Code Rejection

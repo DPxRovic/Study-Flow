@@ -13,6 +13,8 @@ export interface ServerConfig {
   resendApiKey: string;
   resendFromEmail: string;
   enableDevResetFallback: boolean;
+  showDevResetCodeInUi: boolean;
+  isProd: boolean;
 }
 
 const nodeEnv = process.env.NODE_ENV || 'development';
@@ -47,4 +49,9 @@ export const config: ServerConfig = {
   resendApiKey: process.env.RESEND_API_KEY || '',
   resendFromEmail: process.env.RESEND_FROM_EMAIL || 'StudyFlow <onboarding@resend.dev>',
   enableDevResetFallback: !isProd && process.env.ENABLE_DEV_RESET_FALLBACK === 'true',
+  showDevResetCodeInUi:
+    !isProd &&
+    process.env.ENABLE_DEV_RESET_FALLBACK === 'true' &&
+    process.env.SHOW_DEV_RESET_CODE_IN_UI === 'true',
+  isProd,
 };

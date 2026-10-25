@@ -5,7 +5,7 @@
 
 // 1. Load env FIRST (before any other imports)
 import dotenv from 'dotenv';
-dotenv.config();
+dotenv.config({ override: true });
 
 // 2. Now safely import everything else
 import express from 'express';

@@ -69,6 +69,7 @@ export function ForgotPasswordPage() {
   // STEP 1: Request Code
   const handleRequestCode = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return; // Prevent duplicate rapid clicks while submission is in flight
     setErrorMessage(null);
 
     const emailErr = validateEmail(email);
@@ -87,13 +88,17 @@ export function ForgotPasswordPage() {
           setDevCode(null);
         }
         setStep('CODE_VERIFICATION');
-        showToast('Verification code sent! Please check your university inbox.', 'info');
+        if (res.devMode) {
+          showToast('Verification code requested. Enter your 6-digit code below.', 'info');
+        } else {
+          showToast('Verification code requested! Please check your university inbox.', 'info');
+        }
       } else {
-        setErrorMessage(res.message || 'Unable to request verification code.');
+        setErrorMessage(res.message || 'Unable to request verification code. Please try again.');
       }
     } catch (err: any) {
       setErrorMessage(
-        err.message || 'An error occurred while requesting verification code. Please retry.'
+        err.message || 'Email delivery service is temporarily unavailable. Please try again later.'
       );
     } finally {
       setLoading(false);
@@ -184,7 +189,7 @@ export function ForgotPasswordPage() {
           {step === 'EMAIL_ENTRY' &&
             'Enter your registered university email to receive a secure 6-digit recovery code.'}
           {step === 'CODE_VERIFICATION' &&
-            `A 6-digit verification code was dispatched to ${email}.`}
+            `A 6-digit verification code was requested for ${email}.`}
           {step === 'NEW_PASSWORD' &&
             'Your identity has been verified. Create a new strong password for your account.'}
           {step === 'SUCCESS' &&
@@ -226,10 +231,10 @@ export function ForgotPasswordPage() {
             variant="primary"
             className="w-full py-2.5 text-xs font-bold"
             loading={loading}
-            disabled={!email || loading}
+            disabled={!email.trim() || loading}
             icon={<Mail className="w-4 h-4" />}
           >
-            Send Verification Code
+            {loading ? 'Sending Verification Code...' : 'Send Verification Code'}
           </Button>
 
           <div className="text-center pt-2">
@@ -264,13 +269,21 @@ export function ForgotPasswordPage() {
           </div>
 
           {devCode && (
-            <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 space-y-1.5 animate-in fade-in duration-200">
-              <div className="font-bold flex items-center gap-1.5 text-amber-800">
-                <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                School Project Demonstration Mode
+            <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-300 text-xs text-amber-950 space-y-2 animate-in fade-in duration-200">
+              <div className="font-bold flex items-center justify-between text-amber-900">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                  Local Development Testing Panel (Explicitly Enabled)
+                </span>
+                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 bg-amber-200 text-amber-850 rounded">
+                  SHOW_DEV_RESET_CODE_IN_UI
+                </span>
               </div>
-              <p className="text-[11px] text-amber-700 leading-relaxed">
-                Resend Sandbox restricts external inbox delivery. Test recovery code: <strong className="font-mono text-xs tracking-wider bg-white px-2 py-0.5 rounded border border-amber-300 text-amber-950 font-extrabold">{devCode}</strong> (also logged to server terminal).
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Verification code for manual testing: <strong className="font-mono text-xs tracking-wider bg-white px-2 py-0.5 rounded border border-amber-300 text-amber-950 font-extrabold">{devCode}</strong>
+              </p>
+              <p className="text-[10px] text-amber-700 italic">
+                Note: In presentation and production modes, this panel is completely hidden and code is never exposed. Auto-fill is disabled; enter the 6 digits manually below.
               </p>
             </div>
           )}
@@ -307,7 +320,7 @@ export function ForgotPasswordPage() {
             disabled={code.length !== 6 || loading}
             icon={<KeyRound className="w-4 h-4" />}
           >
-            Verify Security Code
+            {loading ? 'Verifying Security Code...' : 'Verify Security Code'}
           </Button>
 
           <div className="flex items-center justify-between pt-2 text-xs">
@@ -315,10 +328,10 @@ export function ForgotPasswordPage() {
               type="button"
               onClick={handleRequestCode}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 font-semibold text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 font-semibold text-slate-500 hover:text-slate-800 transition-colors cursor-pointer disabled:opacity-50"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Resend code</span>
+              <RotateCcw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <span>{loading ? 'Requesting...' : 'Resend code'}</span>
             </button>
 
             <Link
