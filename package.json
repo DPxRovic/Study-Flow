@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "start": "node dist/server.js",
+    "start": "node server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -16,7 +16,8 @@
     "db:validate": "prisma validate",
     "test:backend": "tsx src/server/tests/backend.test.ts",
     "test:integration": "tsx src/server/tests/integration.test.ts",
-    "test": "tsx src/server/tests/backend.test.ts && tsx src/server/tests/integration.test.ts"
+    "test:reset": "tsx src/server/tests/persistence_audit_reset.test.ts",
+    "test": "tsx src/server/tests/backend.test.ts && tsx src/server/tests/integration.test.ts && tsx src/server/tests/persistence_audit_reset.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -33,6 +34,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "react-router-dom": "^7.18.4",
+    "resend": "^6.34.1",
     "vite": "^8.3.0"
   },
   "devDependencies": {

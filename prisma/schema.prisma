@@ -72,6 +72,7 @@ model User {
   schedules                Schedule[]
   studySessions            StudySession[]
   notifications            AcademicNotification[]
+  passwordResetRequests    PasswordResetRequest[]
 
   @@index([email])
 }
@@ -227,5 +228,25 @@ model AuditLog {
   @@index([adminId])
   @@index([category])
   @@index([action])
+}
+
+model PasswordResetRequest {
+  id             String    @id @default(uuid())
+  userId         String
+  codeHash       String    // Cryptographic HMAC-SHA256 hash of the 6-digit numeric verification code
+  tokenHash      String?   @unique // Cryptographic HMAC-SHA256 hash of the single-use reset authorization token
+  expiresAt      DateTime  // 10 minutes expiry window
+  tokenExpiresAt DateTime? // 10 minutes expiry for password update after code verification
+  attemptsCount  Int       @default(0) // Failed attempt counter
+  maxAttempts    Int       @default(5)
+  usedAt         DateTime? // Consumed timestamp
+  ipAddress      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([tokenHash])
 }
 

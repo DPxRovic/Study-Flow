@@ -31,6 +31,9 @@ interface AuthContextType {
   register: (data: RegisterData) => Promise<LoginResult>;
   logout: () => Promise<void>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; emailExists: boolean }>;
+  forgotPassword: (email: string) => Promise<{ success: boolean; message: string }>;
+  verifyResetCode: (email: string, code: string) => Promise<{ success: boolean; message: string; resetToken?: string }>;
+  resetPassword: (email: string, resetToken: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   switchRole: (role: UserRole) => Promise<void>;
   updateUserPreferences: (prefs: Partial<User>) => Promise<void>;
 }
@@ -140,15 +143,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Password recovery helper
+   * Password recovery helper - connects directly to backend API
    */
   const requestPasswordReset = async (email: string): Promise<{ success: boolean; emailExists: boolean }> => {
-    const trimmed = email.trim().toLowerCase();
-    const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
-    return {
-      success: isValidEmail,
-      emailExists: isValidEmail,
-    };
+    try {
+      const res = await authService.forgotPassword(email.trim());
+      return {
+        success: res.success,
+        emailExists: true,
+      };
+    } catch {
+      return {
+        success: false,
+        emailExists: false,
+      };
+    }
+  };
+
+  const forgotPassword = async (email: string): Promise<{ success: boolean; message: string }> => {
+    return authService.forgotPassword(email.trim());
+  };
+
+  const verifyResetCode = async (
+    email: string,
+    code: string
+  ): Promise<{ success: boolean; message: string; resetToken?: string }> => {
+    return authService.verifyResetCode(email.trim(), code.trim());
+  };
+
+  const resetPassword = async (
+    email: string,
+    resetToken: string,
+    newPassword: string
+  ): Promise<{ success: boolean; message: string }> => {
+    return authService.resetPassword(email.trim(), resetToken, newPassword);
   };
 
   /**
@@ -196,6 +224,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         register,
         logout,
         requestPasswordReset,
+        forgotPassword,
+        verifyResetCode,
+        resetPassword,
         switchRole,
         updateUserPreferences,
       }}

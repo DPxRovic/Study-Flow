@@ -74,4 +74,30 @@ export const authService = {
       apiClient.clearToken();
     }
   },
+
+  async forgotPassword(email: string): Promise<{ success: boolean; message: string }> {
+    return apiClient.post<{ success: boolean; message: string }>('/auth/forgot-password', { email });
+  },
+
+  async verifyResetCode(
+    email: string,
+    code: string
+  ): Promise<{ success: boolean; message: string; resetToken?: string }> {
+    return apiClient.post<{ success: boolean; message: string; resetToken: string }>(
+      '/auth/verify-reset-code',
+      { email, code }
+    );
+  },
+
+  async resetPassword(
+    email: string,
+    resetToken: string,
+    newPassword: string
+  ): Promise<{ success: boolean; message: string }> {
+    return apiClient.post<{ success: boolean; message: string }>('/auth/reset-password', {
+      email,
+      resetToken,
+      newPassword,
+    });
+  },
 };

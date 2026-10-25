@@ -10,6 +10,8 @@ export interface ServerConfig {
   jwtExpiresIn: string;
   env: string;
   appName: string;
+  resendApiKey: string;
+  resendFromEmail: string;
 }
 
 const nodeEnv = process.env.NODE_ENV || 'development';
@@ -41,4 +43,6 @@ export const config: ServerConfig = {
   jwtExpiresIn: '7d',
   env: nodeEnv,
   appName: 'StudyFlow Academic Planner',
+  resendApiKey: process.env.RESEND_API_KEY || '',
+  resendFromEmail: process.env.RESEND_FROM_EMAIL || 'StudyFlow <onboarding@resend.dev>',
 };

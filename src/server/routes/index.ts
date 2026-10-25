@@ -38,6 +38,9 @@ router.get('/health', async (req, res) => {
 // ==========================================
 router.post('/auth/register', authRateLimiter, AuthController.register);
 router.post('/auth/login', authRateLimiter, AuthController.login);
+router.post('/auth/forgot-password', authRateLimiter, AuthController.forgotPassword);
+router.post('/auth/verify-reset-code', authRateLimiter, AuthController.verifyResetCode);
+router.post('/auth/reset-password', authRateLimiter, AuthController.resetPassword);
 router.get('/auth/me', authenticate, AuthController.me);
 router.patch('/auth/preferences', authenticate, AuthController.updatePreferences);
 router.post('/auth/logout', authenticate, AuthController.logout);

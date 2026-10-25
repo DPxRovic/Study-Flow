@@ -111,12 +111,12 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [subjects, setSubjects] = useState<Subject[]>(INITIAL_SUBJECTS);
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
-  const [sessions, setSessions] = useState<ScheduledSession[]>(INITIAL_ALL_SESSIONS);
-  const [availability, setAvailability] = useState<AvailabilitySlot[]>(INITIAL_AVAILABILITY);
-  const [announcements, setAnnouncements] = useState<Announcement[]>(INITIAL_ANNOUNCEMENTS);
-  const [notifications, setNotifications] = useState<AcademicNotification[]>(INITIAL_NOTIFICATIONS);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [sessions, setSessions] = useState<ScheduledSession[]>([]);
+  const [availability, setAvailability] = useState<AvailabilitySlot[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [notifications, setNotifications] = useState<AcademicNotification[]>([]);
 
   const [journalEntries, setJournalEntries] = useState<ReflectionJournalEntry[]>(() => {
     const saved = localStorage.getItem('studyflow_journal');
@@ -161,26 +161,42 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         notifData,
         announcementData,
       ] = await Promise.all([
-        subjectService.list().catch(() => INITIAL_SUBJECTS),
-        taskService.list().catch(() => INITIAL_TASKS),
-        scheduleService.listSessions().catch(() => INITIAL_ALL_SESSIONS),
-        availabilityService.list().catch(() => INITIAL_AVAILABILITY),
-        notificationService.list().catch(() => ({
-          notifications: INITIAL_NOTIFICATIONS,
-          unreadCount: INITIAL_NOTIFICATIONS.filter((n) => !n.read).length,
-        })),
-        adminService.getAnnouncements().catch(() => ({ success: true, data: INITIAL_ANNOUNCEMENTS })),
+        subjectService.list().catch((err) => {
+          console.error('Failed to fetch subjects from server:', err);
+          return [];
+        }),
+        taskService.list().catch((err) => {
+          console.error('Failed to fetch tasks from server:', err);
+          return [];
+        }),
+        scheduleService.listSessions().catch((err) => {
+          console.error('Failed to fetch sessions from server:', err);
+          return [];
+        }),
+        availabilityService.list().catch((err) => {
+          console.error('Failed to fetch availability from server:', err);
+          return [];
+        }),
+        notificationService.list().catch((err) => {
+          console.error('Failed to fetch notifications from server:', err);
+          return {
+            notifications: [],
+            unreadCount: 0,
+          };
+        }),
+        adminService.getAnnouncements().catch((err) => {
+          console.error('Failed to fetch announcements from server:', err);
+          return { success: true, data: [] };
+        }),
       ]);
 
-      setSubjects(fetchedSubjects.length > 0 ? fetchedSubjects : INITIAL_SUBJECTS);
-      setTasks(fetchedTasks.length > 0 ? fetchedTasks : INITIAL_TASKS);
-      setSessions(fetchedSessions.length > 0 ? fetchedSessions : INITIAL_ALL_SESSIONS);
-      setAvailability(fetchedAvailability.length > 0 ? fetchedAvailability : INITIAL_AVAILABILITY);
-      setNotifications(notifData.notifications.length > 0 ? notifData.notifications : INITIAL_NOTIFICATIONS);
+      setSubjects(fetchedSubjects);
+      setTasks(fetchedTasks);
+      setSessions(fetchedSessions);
+      setAvailability(fetchedAvailability);
+      setNotifications(notifData.notifications || []);
       setAnnouncements(
-        announcementData.data && announcementData.data.length > 0
-          ? announcementData.data
-          : INITIAL_ANNOUNCEMENTS
+        announcementData.data || []
       );
     } catch (err: any) {
       console.warn('Could not sync all planner data from API:', err);
@@ -460,7 +476,10 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
             setSessions(res.sessions);
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.error('Failed to persist schedule to backend:', err);
+          showToast(err.message || 'Failed to save generated schedule to database', 'error');
+        });
     }
 
     addNotification({
