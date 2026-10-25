@@ -45,7 +45,7 @@ export function DailyTimeline({
 
   // Sessions for this specific date
   const daySessions = sessions
-    .filter((s) => s.date === currentDate)
+    .filter((s) => s.date === currentDate && s.status !== 'cancelled')
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   // Determine dayOfWeek for availability lookup

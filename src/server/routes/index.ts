@@ -106,13 +106,21 @@ router.get('/progress/summary', authenticate, ProgressController.getSummary);
 // 8. Administrative Oversight (Admin Only)
 // ==========================================
 router.get('/admin/users', authenticate, requireRole('admin'), AdminController.listUsers);
+router.post('/admin/users', authenticate, requireRole('admin'), AdminController.provisionUser);
+router.delete('/admin/users/:id', authenticate, requireRole('admin'), AdminController.deleteUser);
 router.get('/admin/users/:id', authenticate, requireRole('admin'), AdminController.getUserById);
+router.patch('/admin/users/:id', authenticate, requireRole('admin'), AdminController.updateUser);
 router.patch('/admin/users/:id/role', authenticate, requireRole('admin'), AdminController.updateUserRole);
 router.patch('/admin/users/:id/status', authenticate, requireRole('admin'), AdminController.updateUserStatus);
 router.get('/admin/audit-logs', authenticate, requireRole('admin'), AdminAuditController.listLogs);
 router.get('/admin/audit-logs/stats', authenticate, requireRole('admin'), AdminAuditController.getAuditStats);
 router.get('/admin/audit-logs/:id', authenticate, requireRole('admin'), AdminAuditController.getLogById);
 router.get('/admin/catalog', authenticate, requireRole('admin'), AdminController.getCatalog);
+router.post('/admin/catalog', authenticate, requireRole('admin'), AdminController.createCatalogCourse);
+router.patch('/admin/catalog/:code', authenticate, requireRole('admin'), AdminController.updateCatalogCourse);
+router.delete('/admin/catalog/:code', authenticate, requireRole('admin'), AdminController.deleteCatalogCourse);
+router.get('/admin/settings', authenticate, requireRole('admin'), AdminController.getSettings);
+router.patch('/admin/settings', authenticate, requireRole('admin'), AdminController.updateSettings);
 router.get('/admin/metrics', authenticate, requireRole('admin'), AdminController.getMetrics);
 router.get('/admin/announcements', authenticate, AdminController.listAnnouncements);
 router.post('/admin/announcements', authenticate, requireRole('admin'), AdminController.createAnnouncement);

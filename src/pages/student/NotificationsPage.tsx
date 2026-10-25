@@ -11,24 +11,23 @@ import {
   Trash2,
   RotateCw,
   AlertTriangle,
-  Plus,
   SlidersHorizontal,
   Clock,
   Inbox,
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Skeleton } from '../../components/ui/Skeleton';
-import { EmptyState } from '../../components/ui/EmptyState';
 import { usePlanner } from '../../context/PlannerContext';
+import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { NotificationItem } from '../../components/notifications/NotificationItem';
 import {
   NotificationFilterTabs,
   NotificationFilterTab,
 } from '../../components/notifications/NotificationFilterTabs';
-import { AcademicNotification } from '../../types';
 
 export function NotificationsPage() {
+  const { user } = useAuth();
   const {
     notifications,
     markNotificationRead,
@@ -36,9 +35,6 @@ export function NotificationsPage() {
     markAllNotificationsRead,
     deleteNotification,
     clearAllNotifications,
-    addNotification,
-    tasks,
-    subjects,
     refreshData,
   } = usePlanner();
 
@@ -106,44 +102,10 @@ export function NotificationsPage() {
     }
   };
 
-  // Helper to generate a realistic academic alert for verification
-  const handleGenerateSampleAlert = () => {
-    const sampleTypes = [
-      {
-        category: 'deadline' as const,
-        priority: 'urgent' as const,
-        title: 'Upcoming Deliverable: CS 201 Problem Set 4 Due Soon',
-        description: 'Remaining study workload: 2.5 hours. Recommended study block available this evening.',
-        actionUrl: '/tasks',
-        actionLabel: 'View Assignment',
-      },
-      {
-        category: 'schedule' as const,
-        priority: 'important' as const,
-        title: 'New Study Block Scheduled for Calculus III',
-        description: 'Auto-allocated 90 minutes tomorrow from 10:30–12:00 in your preferred quiet window.',
-        actionUrl: '/schedule',
-        actionLabel: 'Open Calendar Grid',
-      },
-      {
-        category: 'conflict' as const,
-        priority: 'urgent' as const,
-        title: 'Schedule Conflict Warning: Overlapping Lecture Window',
-        description: 'BIO 110 laboratory commitment overlaps with an unsaved personal study session.',
-        actionUrl: '/schedule',
-        actionLabel: 'Resolve Conflict',
-      },
-    ];
-
-    const pick = sampleTypes[Math.floor(Math.random() * sampleTypes.length)];
-    addNotification(pick);
-    showToast(`Generated new academic notice: "${pick.title}"`, 'info');
-  };
-
   // Error State View
   if (simulatedError) {
     return (
-      <div className="max-w-4xl space-y-6 pb-12">
+      <div className="max-w-[1440px] w-full space-y-6 pb-12 font-sans">
         <div className="surface-base rounded-2xl p-8 border border-rose-200 text-center space-y-4 shadow-2xs">
           <AlertTriangle className="w-10 h-10 text-rose-500 mx-auto" />
           <div>
@@ -165,14 +127,14 @@ export function NotificationsPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl pb-12">
+    <div className="space-y-6 max-w-[1440px] w-full pb-12 font-sans">
       {/* Editorial Header */}
       <div className="border-b border-slate-200/80 pb-5 flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <div className="text-xs text-slate-500 font-semibold mb-1 flex items-center gap-2">
             <span>Academic Activity Feed</span>
             <span aria-hidden="true">·</span>
-            <span>Fall 2026</span>
+            <span>{user?.term || 'Current Term'}</span>
             {unreadCount > 0 ? (
               <>
                 <span aria-hidden="true">·</span>
@@ -205,16 +167,6 @@ export function NotificationsPage() {
               Mark All Read
             </Button>
           )}
-
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleGenerateSampleAlert}
-            icon={<Plus className="w-3.5 h-3.5" />}
-            title="Generate a realistic academic notification"
-          >
-            Test Alert
-          </Button>
 
           {notifications.length > 0 && (
             <Button
@@ -276,16 +228,6 @@ export function NotificationsPage() {
                 ? 'You have reviewed all current deadlines, schedule blocks, and institutional notices.'
                 : 'StudyFlow will quietly notify you here when deadlines approach within 48h, when study blocks are auto-scheduled, or if schedule collisions occur.'}
             </p>
-          </div>
-          <div className="pt-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleGenerateSampleAlert}
-              icon={<Plus className="w-3.5 h-3.5" />}
-            >
-              Generate Sample Academic Notice
-            </Button>
           </div>
         </div>
       ) : (

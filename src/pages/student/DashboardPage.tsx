@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   CheckCircle2,
+  CheckSquare,
   Clock,
   CalendarRange,
   ArrowRight,
@@ -27,11 +28,13 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
+import { EmptyState } from '../../components/ui/EmptyState';
 import { Badge, PriorityBadge } from '../../components/ui/Badge';
 import { usePlanner } from '../../context/PlannerContext';
 import { useAuth } from '../../context/AuthContext';
 import { SUBJECT_CATEGORY_STYLES } from '../../theme/tokens';
 import { FocusTimerModal } from '../../components/dashboard/FocusTimerModal';
+import { formatCurrentWeekLabel, formatLongLocalDate, toLocalDateKey } from '../../utils/date';
 
 export function DashboardPage() {
   const navigate = useNavigate();
@@ -39,6 +42,7 @@ export function DashboardPage() {
   const {
     tasks,
     subjects,
+    sessions,
     todaySessions,
     toggleSessionComplete,
     announcements,
@@ -49,6 +53,9 @@ export function DashboardPage() {
   // State for active focus timer modal
   const [timerModalOpen, setTimerModalOpen] = useState(false);
   const [timelineFilter, setTimelineFilter] = useState<'all' | 'pending' | 'completed'>('all');
+  const now = new Date();
+  const todayName = now.toLocaleDateString(undefined, { weekday: 'long' });
+  const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 18 ? 'Good afternoon' : 'Good evening';
 
   // Tabular stats calculations
   const totalMinutes = todaySessions.reduce((acc, s) => acc + s.durationMinutes, 0);
@@ -86,7 +93,6 @@ export function DashboardPage() {
     .map((task) => {
       const subject = subjects.find((s) => s.id === task.subjectId);
       const dueDateObj = new Date(task.dueDate);
-      const now = new Date();
       const diffHours = (dueDateObj.getTime() - now.getTime()) / (1000 * 3600);
       const diffDays = Math.ceil(diffHours / 24);
 
@@ -119,80 +125,205 @@ export function DashboardPage() {
     })
     .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
 
-  // Class commitments for today from availability
-  const todayClasses = availability.filter((slot) => slot.dayOfWeek === 2 && slot.type === 'class');
+  // Class commitments for the user's real local day.
+  const todayClasses = availability.filter((slot) => slot.dayOfWeek === now.getDay() && slot.type === 'class');
+
+  const nextThreeDays = Array.from({ length: 3 }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + index + 1);
+    const dateKey = toLocalDateKey(date);
+    const daySessions = sessions
+      .filter((session) => session.date === dateKey && session.status !== 'cancelled')
+      .sort((a, b) => a.startTime.localeCompare(b.startTime));
+    const dueTasks = tasks.filter((task) => task.status !== 'completed' && task.dueDate.startsWith(dateKey));
+    const plannedHours = daySessions.reduce((sum, session) => sum + session.durationMinutes / 60, 0);
+
+    return {
+      dateKey,
+      label: date.toLocaleDateString(undefined, {
+        weekday: 'long',
+        month: 'short',
+        day: 'numeric',
+      }),
+      daySessions,
+      dueTasks,
+      plannedHours,
+    };
+  });
+
+  const activeTasksCount = tasks.filter((t) => t.status !== 'completed').length;
 
   return (
-    <div className="space-y-8 max-w-5xl mx-auto pb-12">
-      {/* =========================================================================
-          1. HERO / HEADER: AUTHORITATIVE ACADEMIC CONTEXT & DAY PACING
-          Answers: Date, term context, and daily workload balance
-         ========================================================================= */}
-      <header className="border-b border-slate-200/90 pb-6 space-y-4">
-        {/* Kicker Row: Date, Term, and Fatigue Cap boundary */}
-        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 font-medium">
-          <div className="flex items-center gap-2">
-            <span className="font-extrabold text-slate-900">Tuesday, October 6, 2026</span>
-            <span className="text-slate-300" aria-hidden="true">·</span>
-            <span className="text-sky-700 font-bold">{user?.term || 'Fall 2026'} Academic Term</span>
-            <span className="text-slate-300" aria-hidden="true">·</span>
-            <span className="text-slate-600 font-medium">Week 7 Pacing</span>
-          </div>
-
-          <div className="flex items-center gap-2 text-[11px]">
-            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono font-bold border ${
+    <div className="space-y-6 max-w-[1440px] w-full pb-12 font-sans">
+      {/* 1. Header & Quick Actions */}
+      <div className="border-b border-slate-200/90 pb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-sky-800 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200/80">
+              Student Workspace · {user?.term || 'Fall 2026'}
+            </span>
+            <span className="text-[11px] text-slate-400 font-mono">Week of {formatCurrentWeekLabel(now)}</span>
+            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border inline-flex items-center gap-1 ${
               isOverCap
                 ? 'bg-rose-50 text-rose-800 border-rose-200'
                 : 'bg-emerald-50 text-emerald-800 border-emerald-200'
             }`}>
               <span className={`w-1.5 h-1.5 rounded-full ${isOverCap ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'}`} />
-              <span>
-                {isOverCap
-                  ? `Fatigue Alert: Exceeds ${dailyCap}h cap`
-                  : `Fatigue Boundary: ${dailyCap}h max / day (${capMargin.toFixed(1)}h margin)`}
-              </span>
+              Cap: {dailyCap}h / day
             </span>
           </div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
+            {greeting}, {user?.name?.split(' ')[0] || 'Student'}.
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-2xl font-medium leading-relaxed">
+            Curriculum pacing, active deliverable deadlines, weekly time windows, and fatigue safeguard boundaries.
+          </p>
         </div>
 
-        {/* Editorial Greeting + Workload Status + Pacing Gauge */}
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-5">
-          <div className="space-y-1.5 max-w-xl">
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 leading-tight">
-              Good morning, {user?.name?.split(' ')[0] || 'Maya'}.
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-600 font-medium leading-relaxed">
-              You have <strong className="text-slate-900">{todaySessions.length} study blocks</strong> scheduled today ({totalHoursStr}h planned). Your highest-priority deliverable is <strong className="text-slate-900">{upcomingTasks[0]?.title || 'CS 201 Problem Set 4'}</strong>, due in 2 days.
-            </p>
+        <div className="flex items-center gap-2.5">
+          <Link to="/schedule">
+            <Button variant="secondary" size="sm" icon={<CalendarRange className="w-3.5 h-3.5 text-sky-600" />}>
+              Study Schedule
+            </Button>
+          </Link>
+          <Link to="/subjects">
+            <Button variant="secondary" size="sm" icon={<BookOpen className="w-3.5 h-3.5" />}>
+              Courses ({subjects.length})
+            </Button>
+          </Link>
+          <Link to="/tasks">
+            <Button variant="primary" size="sm" icon={<Plus className="w-3.5 h-3.5" />}>
+              Add Assignment
+            </Button>
+          </Link>
+        </div>
+      </div>
+
+      {/* 2. Key Academic Workload & Progress Metrics Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        {/* Metric 1: Active in Queue */}
+        <div className="p-4 sm:p-5 surface-base rounded-2xl border border-slate-200/90 shadow-2xs space-y-1.5 hover:border-slate-300 transition-colors">
+          <div className="text-xs text-slate-500 font-bold flex items-center justify-between">
+            <span>Active Deliverables</span>
+            <CheckSquare className="w-4 h-4 text-sky-600" />
           </div>
-
-          {/* Day Pacing Status Box (Tactile Surface with Inset Track) */}
-          <div className="surface-base rounded-2xl p-4 shrink-0 space-y-2.5 min-w-[260px]">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-700 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-sky-600" />
-                <span>Today's Study Progress</span>
-              </span>
-              <span className="font-mono tabular-nums font-extrabold text-sky-900">
-                {completedHoursStr}h / {totalHoursStr}h
-              </span>
-            </div>
-
-            {/* Integrated Inset Track */}
-            <div className="surface-inset w-full h-2.5 rounded-full overflow-hidden p-0.5">
-              <div
-                className="h-full bg-gradient-to-r from-sky-600 via-sky-500 to-cyan-500 rounded-full transition-all duration-500 shadow-2xs"
-                style={{ width: `${Math.min(100, progressPercent)}%` }}
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium">
-              <span className="text-sky-700 font-bold">{progressPercent}% complete</span>
-              <span className="font-mono text-slate-600">{remainingHoursStr}h remaining</span>
-            </div>
+          <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
+            {activeTasksCount} tasks
+          </div>
+          <div className="text-[11px] text-slate-500 font-medium">
+            {tasks.filter((t) => t.priority === 'urgent').length} due &le; 48 hours
           </div>
         </div>
-      </header>
+
+        {/* Metric 2: Enrolled Courses */}
+        <div className="p-4 sm:p-5 surface-base rounded-2xl border border-slate-200/90 shadow-2xs space-y-1.5 hover:border-slate-300 transition-colors">
+          <div className="text-xs text-slate-500 font-bold flex items-center justify-between">
+            <span>Enrolled Courses</span>
+            <BookOpen className="w-4 h-4 text-sky-600" />
+          </div>
+          <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
+            {subjects.length} courses
+          </div>
+          <div className="text-[11px] text-slate-500 font-medium">
+            {subjects.reduce((sum, s) => sum + (s.credits || 3), 0)} total credit units
+          </div>
+        </div>
+
+        {/* Metric 3: Daily Study Cap */}
+        <div className="p-4 sm:p-5 surface-base rounded-2xl border border-slate-200/90 shadow-2xs space-y-1.5 hover:border-slate-300 transition-colors">
+          <div className="text-xs text-slate-500 font-bold flex items-center justify-between">
+            <span>Daily Study Cap</span>
+            <Clock className="w-4 h-4 text-sky-600" />
+          </div>
+          <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
+            {dailyCap}h / day
+          </div>
+          <div className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded-md inline-flex items-center gap-1 border border-emerald-200/80">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span>Fatigue Safeguard</span>
+          </div>
+        </div>
+
+        {/* Metric 4: Scheduled Study */}
+        <div className="p-4 sm:p-5 surface-base rounded-2xl border border-slate-200/90 shadow-2xs space-y-1.5 hover:border-slate-300 transition-colors">
+          <div className="text-xs text-slate-500 font-bold flex items-center justify-between">
+            <span>Today's Study Progress</span>
+            <TrendingUp className="w-4 h-4 text-sky-600" />
+          </div>
+          <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
+            {completedHoursStr}h / {totalHoursStr}h
+          </div>
+          <div className="text-[11px] text-slate-500 font-medium">
+            {progressPercent}% complete ({remainingHoursStr}h remaining)
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Main Content: Getting Started Guide (when no subjects) or Full Student Focus Plan */}
+      {subjects.length === 0 ? (
+        <div className="surface-base rounded-2xl border border-slate-200/90 p-6 sm:p-8 shadow-2xs space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+            <div className="space-y-1">
+              <h2 className="text-lg font-bold text-slate-900">Welcome to Your Academic Atelier</h2>
+              <p className="text-xs sm:text-sm text-slate-600">
+                Your planner is ready for your personalized term courses, weekly commitments, and study rhythm.
+              </p>
+            </div>
+            <Link to="/subjects">
+              <Button variant="primary" icon={<Plus className="w-4 h-4" />}>
+                Add Your First Course
+              </Button>
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Link
+              to="/subjects"
+              className="p-5 rounded-xl border border-slate-200/80 bg-slate-50/50 hover:bg-sky-50/40 hover:border-sky-300 transition-all space-y-2 group"
+            >
+              <div className="w-9 h-9 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-sm">
+                1
+              </div>
+              <div className="font-bold text-sm text-slate-900 group-hover:text-sky-900">
+                1. Enroll in Courses
+              </div>
+              <div className="text-xs text-slate-600">
+                Add your lecture classes, course credit units, and weekly study targets.
+              </div>
+            </Link>
+
+            <Link
+              to="/availability"
+              className="p-5 rounded-xl border border-slate-200/80 bg-slate-50/50 hover:bg-sky-50/40 hover:border-sky-300 transition-all space-y-2 group"
+            >
+              <div className="w-9 h-9 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-sm">
+                2
+              </div>
+              <div className="font-bold text-sm text-slate-900 group-hover:text-sky-900">
+                2. Set Availability Windows
+              </div>
+              <div className="text-xs text-slate-600">
+                Block out class lecture hours, campus commitments, and preferred focus times.
+              </div>
+            </Link>
+
+            <Link
+              to="/tasks"
+              className="p-5 rounded-xl border border-slate-200/80 bg-slate-50/50 hover:bg-sky-50/40 hover:border-sky-300 transition-all space-y-2 group"
+            >
+              <div className="w-9 h-9 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-sm">
+                3
+              </div>
+              <div className="font-bold text-sm text-slate-900 group-hover:text-sky-900">
+                3. Track Assignments
+              </div>
+              <div className="text-xs text-slate-600">
+                Log homework, lab reports, and upcoming exams to generate an optimized study schedule.
+              </div>
+            </Link>
+          </div>
+        </div>
+      ) : (
+        <>
 
       {/* =========================================================================
           2. THE VISUAL ANCHOR: "NEXT FOCUS" COMMANDING ACADEMIC FOCAL POINT
@@ -241,7 +372,15 @@ export function DashboardPage() {
 
                 {/* Subtasks / Deliverable Status Line */}
                 <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300 pt-1 font-medium">
-                  <span className="text-amber-300 font-semibold">Due Thursday at 23:59</span>
+                  <span className="text-amber-300 font-semibold">
+                    Due {new Date(activeTask.dueDate).toLocaleString(undefined, {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
                   <span className="text-slate-600">·</span>
                   <span className="font-mono text-slate-200">{activeTask.remainingHours.toFixed(1)}h remaining</span>
                   {activeTask.subtasks && activeTask.subtasks.length > 0 && (
@@ -292,25 +431,47 @@ export function DashboardPage() {
           </div>
           <div className="space-y-1">
             <h2 className="text-base font-extrabold text-slate-900">
-              All Planned Study Blocks Completed!
+              {todaySessions.length > 0 ? 'All planned study blocks completed!' : 'No study sessions planned today'}
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
-              You've logged {completedHoursStr} hours of focused coursework today while respecting your sleep boundary. Relax, or generate tomorrow's study schedule.
+              {todaySessions.length > 0
+                ? `You've logged ${completedHoursStr} hours of focused coursework today. You can review upcoming deadlines or prepare the next study plan.`
+                : tasks.length === 0
+                ? 'Add an assignment or exam with a deadline, then set your availability to generate a realistic plan.'
+                : availability.length === 0
+                ? 'Set your weekly availability so StudyFlow knows when you are free to focus.'
+                : 'Your setup is ready. Generate a schedule to allocate your remaining coursework.'}
             </p>
           </div>
           <div className="pt-2 flex justify-center gap-3">
-            <Button
-              variant="secondary"
-              onClick={() => generateSchedule({ maxDailyHours: dailyCap })}
-              icon={<CalendarRange className="w-3.5 h-3.5" />}
-            >
-              Generate Next Study Blocks
-            </Button>
-            <Link to="/tasks">
-              <Button variant="primary" icon={<ArrowRight className="w-3.5 h-3.5" />}>
-                View Assignment Backlog
-              </Button>
-            </Link>
+            {tasks.length === 0 ? (
+              <Link to="/tasks">
+                <Button variant="primary" icon={<Plus className="w-3.5 h-3.5" />}>
+                  Add an Assignment or Exam
+                </Button>
+              </Link>
+            ) : availability.length === 0 ? (
+              <Link to="/availability">
+                <Button variant="primary" icon={<CalendarRange className="w-3.5 h-3.5" />}>
+                  Set Weekly Availability
+                </Button>
+              </Link>
+            ) : (
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => generateSchedule({ maxDailyHours: dailyCap })}
+                  icon={<CalendarRange className="w-3.5 h-3.5" />}
+                >
+                  Generate Next Study Blocks
+                </Button>
+                <Link to="/tasks">
+                  <Button variant="primary" icon={<ArrowRight className="w-3.5 h-3.5" />}>
+                    View Assignment Backlog
+                  </Button>
+                </Link>
+              </>
+            )}
           </div>
         </section>
       )}
@@ -337,7 +498,7 @@ export function DashboardPage() {
                 <span>Today's Academic Timetable</span>
               </h2>
               <p className="text-xs text-slate-500 font-medium mt-0.5">
-                Classes, scheduled breaks, and focused study blocks for Tuesday
+                Classes, scheduled breaks, and focused study blocks for {todayName}
               </p>
             </div>
 
@@ -381,23 +542,34 @@ export function DashboardPage() {
 
           {/* Timetable Vertical Track Structure */}
           <div className="relative pl-4 sm:pl-6 space-y-4 before:absolute before:left-[11px] sm:before:left-[19px] before:top-3 before:bottom-3 before:w-0.5 before:bg-slate-200/90">
-            {/* Morning Lecture Block from Availability */}
-            <div className="relative flex items-start gap-3.5 group">
-              <span className="w-3.5 h-3.5 rounded-full bg-blue-600 ring-4 ring-white shadow-2xs shrink-0 mt-2 z-10" />
-              <div className="flex-1 p-3.5 surface-binder border-blue-200/90 bg-blue-50/40 border-l-4 border-l-blue-600 rounded-2xl space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-slate-900">10:00 – 11:15</span>
-                    <span className="text-slate-300" aria-hidden="true">·</span>
-                    <span className="font-extrabold text-blue-900">BIO 110 Lecture</span>
+            {/* Class commitments from the user's availability */}
+            {todayClasses.map((classSlot) => (
+              <div key={classSlot.id} className="relative flex items-start gap-3.5 group">
+                <span className="w-3.5 h-3.5 rounded-full bg-blue-600 ring-4 ring-white shadow-2xs shrink-0 mt-2 z-10" />
+                <div className="flex-1 p-3.5 surface-binder border-blue-200/90 bg-blue-50/40 border-l-4 border-l-blue-600 rounded-2xl space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-mono font-bold text-slate-900">
+                      {classSlot.startTime} – {classSlot.endTime}
+                    </span>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-700">
+                      Class commitment
+                    </span>
                   </div>
-                  <span className="text-[11px] text-slate-500 font-medium">Franklin Science 202</span>
-                </div>
-                <div className="text-xs text-slate-700 font-medium">
-                  Principles of Molecular Biology · Dr. Aris Thorne
+                  <div className="text-xs text-blue-950 font-bold">
+                    {classSlot.label || 'Scheduled class'}
+                  </div>
                 </div>
               </div>
-            </div>
+            ))}
+
+            {todayClasses.length === 0 && filteredSessions.length === 0 && (
+              <div className="relative flex items-start gap-3.5">
+                <span className="w-3.5 h-3.5 rounded-full bg-slate-300 ring-4 ring-white shrink-0 mt-2 z-10" />
+                <div className="flex-1 p-4 rounded-2xl border border-dashed border-slate-200 text-xs text-slate-500 font-medium">
+                  Nothing is scheduled for today. Add availability or open the schedule to plan a study block.
+                </div>
+              </div>
+            )}
 
             {/* Study Sessions from Planner Context */}
             {filteredSessions.map((session, index) => {
@@ -570,6 +742,11 @@ export function DashboardPage() {
                   </div>
                 );
               })}
+              {upcomingTasks.length === 0 && (
+                <div className="py-8 text-center text-xs text-slate-500 font-medium">
+                  No upcoming deadlines. Add an assignment or exam when you are ready.
+                </div>
+              )}
             </div>
           </section>
 
@@ -595,53 +772,41 @@ export function DashboardPage() {
             </div>
 
             <div className="space-y-2 text-xs">
-              {/* Wednesday */}
-              <div className="p-3 rounded-xl surface-inset border border-slate-200/80 flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                    <span>Wednesday (Tomorrow)</span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-sky-100 text-sky-800 font-bold">
-                      2 Blocks
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    CS 201 Midday Focus (90m) · MATH 241 Lecture & Study
-                  </div>
-                </div>
-                <span className="font-mono font-bold text-slate-700 text-xs">3.0h planned</span>
-              </div>
+              {nextThreeDays.map((day, index) => {
+                const planLabels = [
+                  ...day.daySessions.map((session) => {
+                    const task = tasks.find((item) => item.id === session.taskId);
+                    const subject = subjects.find((item) => item.id === session.subjectId);
+                    return task?.title || `${subject?.code || 'Study'} session`;
+                  }),
+                  ...day.dueTasks.map((task) => `${task.title} due`),
+                ];
+                const itemCount = day.daySessions.length + day.dueTasks.length;
 
-              {/* Thursday */}
-              <div className="p-3 rounded-xl surface-inset border border-slate-200/80 flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                    <span>Thursday, Oct 8</span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-bold">
-                      Milestone
+                return (
+                  <div
+                    key={day.dateKey}
+                    className="p-3 rounded-xl surface-inset border border-slate-200/80 flex items-center justify-between gap-3"
+                  >
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                        <span>{day.label}{index === 0 ? ' (Tomorrow)' : ''}</span>
+                        {itemCount > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 font-bold">
+                            {itemCount} item{itemCount !== 1 ? 's' : ''}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-500 truncate">
+                        {planLabels.length > 0 ? planLabels.join(' · ') : 'No study blocks or deadlines planned'}
+                      </div>
+                    </div>
+                    <span className="font-mono font-bold text-slate-700 text-xs shrink-0">
+                      {day.plannedHours.toFixed(1)}h planned
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-500">
-                    MATH 241 Quiz Prep · CS 201 Problem Set Submission
-                  </div>
-                </div>
-                <span className="font-mono font-bold text-slate-700 text-xs">3.5h planned</span>
-              </div>
-
-              {/* Friday */}
-              <div className="p-3 rounded-xl surface-inset border border-slate-200/80 flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                    <span>Friday, Oct 9</span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 font-bold">
-                      Light Load
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    BIO 110 Lab Report Data & PHIL 105 Reading
-                  </div>
-                </div>
-                <span className="font-mono font-bold text-slate-700 text-xs">2.0h planned</span>
-              </div>
+                );
+              })}
             </div>
           </section>
 
@@ -717,6 +882,8 @@ export function DashboardPage() {
           )}
         </div>
       </div>
+        </>
+      )}
 
       {/* =========================================================================
           4. FOCUS TIMER MODAL (Distraction-Free Collegiate Focus Session)
@@ -727,8 +894,8 @@ export function DashboardPage() {
         session={activeSession}
         task={activeTask}
         subject={activeSubject}
-        onCompleteSession={(sessionId) => {
-          toggleSessionComplete(sessionId);
+        onCompleteSession={(sessionId, actualMinutesLogged) => {
+          toggleSessionComplete(sessionId, actualMinutesLogged);
         }}
       />
     </div>

@@ -30,7 +30,6 @@ import { usePlanner } from '../../context/PlannerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { Announcement } from '../../types';
-import { adminService } from '../../services/adminService';
 
 export function AnnouncementsPage() {
   const { user } = useAuth();
@@ -82,7 +81,7 @@ export function AnnouncementsPage() {
   };
 
   // Form Submission
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setValidationError(null);
 
@@ -96,7 +95,7 @@ export function AnnouncementsPage() {
     }
 
     if (editingAnnouncement) {
-      updateAnnouncement(editingAnnouncement.id, {
+      const succeeded = await updateAnnouncement(editingAnnouncement.id, {
         title: title.trim(),
         content: content.trim(),
         priority,
@@ -104,16 +103,7 @@ export function AnnouncementsPage() {
         pinned,
         status,
       });
-      adminService.updateAnnouncement(editingAnnouncement.id, {
-        title: title.trim(),
-        content: content.trim(),
-        priority,
-        targetCohort,
-        pinned,
-        status,
-      }).catch((e) => console.warn('Backend announcement update sync error:', e));
-
-      showToast(`Updated announcement: "${title.trim()}" (Audit Logged)`, 'success');
+      if (!succeeded) return;
     } else {
       const payload = {
         title: title.trim(),
@@ -124,42 +114,28 @@ export function AnnouncementsPage() {
         pinned,
         status,
       };
-      addAnnouncement(payload);
-      adminService.createAnnouncement(payload).catch((e) => console.warn('Backend announcement create sync error:', e));
-      showToast(`Broadcasted announcement: "${title.trim()}" (Audit Logged)`, 'success');
+      const succeeded = await addAnnouncement(payload);
+      if (!succeeded) return;
     }
 
     setIsModalOpen(false);
   };
 
   // Quick Action: Toggle Publish / Draft
-  const handleTogglePublish = (ann: Announcement) => {
+  const handleTogglePublish = async (ann: Announcement) => {
     const nextStatus = ann.status === 'draft' ? 'published' : 'draft';
-    updateAnnouncement(ann.id, { status: nextStatus });
-    adminService.updateAnnouncement(ann.id, { status: nextStatus }).catch(() => null);
-    showToast(
-      nextStatus === 'published'
-        ? `Published "${ann.title}" to student feeds`
-        : `Unpublished "${ann.title}" to drafts`,
-      'info'
-    );
+    await updateAnnouncement(ann.id, { status: nextStatus });
   };
 
   // Quick Action: Toggle Pinned
-  const handleTogglePin = (ann: Announcement) => {
-    updateAnnouncement(ann.id, { pinned: !ann.pinned });
-    adminService.updateAnnouncement(ann.id, { pinned: !ann.pinned }).catch(() => null);
-    showToast(
-      !ann.pinned ? `Pinned "${ann.title}" to top of student feeds` : `Unpinned "${ann.title}"`,
-      'info'
-    );
+  const handleTogglePin = async (ann: Announcement) => {
+    await updateAnnouncement(ann.id, { pinned: !ann.pinned });
   };
 
   // Quick Action: Delete
-  const handleDelete = (ann: Announcement) => {
-    deleteAnnouncement(ann.id);
-    adminService.deleteAnnouncement(ann.id).catch((e) => console.warn('Backend announcement delete sync error:', e));
-    showToast(`Removed announcement "${ann.title}" (Audit Logged)`, 'info');
+  const handleDelete = async (ann: Announcement) => {
+    if (!window.confirm(`Delete announcement "${ann.title}"? This cannot be undone.`)) return;
+    await deleteAnnouncement(ann.id);
   };
 
   // Filtered Announcements
@@ -185,7 +161,7 @@ export function AnnouncementsPage() {
   const criticalCount = announcements.filter((a) => a.priority === 'critical').length;
 
   return (
-    <div className="space-y-6 max-w-6xl pb-12">
+    <div className="space-y-6 max-w-[1440px] w-full pb-12 font-sans">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/90 pb-5">
         <div>
@@ -244,7 +220,7 @@ export function AnnouncementsPage() {
         <div className="surface-base p-3.5 rounded-xl border border-slate-200/90 shadow-2xs space-y-1">
           <div className="text-slate-500 font-medium text-[11px]">Audience Reach</div>
           <div className="text-xl font-extrabold font-mono text-sky-800 tabular-nums">
-            1,248 Planners
+            Cohort Filtered
           </div>
         </div>
       </div>

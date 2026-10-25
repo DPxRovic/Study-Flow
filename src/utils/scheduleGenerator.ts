@@ -11,6 +11,7 @@ import {
   ScheduleGenerationOptions,
 } from '../types';
 import { StudyFlowSchedulerEngine } from '../server/services/scheduler/schedulerEngine';
+import { toLocalDateKey } from './date';
 
 /**
  * Converts "HH:MM" string to minutes from midnight
@@ -114,7 +115,7 @@ export function detectScheduleConflicts(
   });
 
   // 3. Check for imminent deadlines (<48h) with remaining hours and missing study blocks
-  const now = new Date('2026-10-06T12:00:00').getTime(); // Fall 2026 reference anchor
+  const now = Date.now();
   tasks.forEach((task) => {
     if (task.status === 'completed' || task.remainingHours <= 0) return;
 
@@ -198,8 +199,10 @@ export function generateMockSchedule(
   generatedCount: number;
   warnings: string[];
 } {
-  const startDate = options.startDate || '2026-10-06';
-  const endDate = options.endDate || '2026-10-12';
+  const startDate = options.startDate || toLocalDateKey();
+  const defaultEndDate = new Date();
+  defaultEndDate.setDate(defaultEndDate.getDate() + 6);
+  const endDate = options.endDate || toLocalDateKey(defaultEndDate);
   const mode = options.mode || 'balanced';
 
   const result = StudyFlowSchedulerEngine.generateSchedule(

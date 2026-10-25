@@ -16,6 +16,7 @@ interface TaskModalProps {
   onClose: () => void;
   subjects: Subject[];
   taskToEdit?: Task | null;
+  defaultSubjectId?: string;
   onSave: (taskData: Omit<Task, 'id'>, id?: string) => void;
 }
 
@@ -24,6 +25,7 @@ export function TaskModal({
   onClose,
   subjects,
   taskToEdit,
+  defaultSubjectId,
   onSave,
 }: TaskModalProps) {
   const isEditing = !!taskToEdit;
@@ -68,7 +70,10 @@ export function TaskModal({
     } else {
       // Default state for new task
       setTitle('');
-      setSubjectId(subjects[0]?.id || '');
+      const initialSubjectId = defaultSubjectId && subjects.some((subject) => subject.id === defaultSubjectId)
+        ? defaultSubjectId
+        : subjects[0]?.id || '';
+      setSubjectId(initialSubjectId);
       const d = new Date();
       d.setDate(d.getDate() + 4);
       setDueDate(d.toISOString().slice(0, 10));
@@ -82,7 +87,7 @@ export function TaskModal({
       setSubtasks([]);
     }
     setErrors({});
-  }, [taskToEdit, isOpen, subjects]);
+  }, [taskToEdit, isOpen, subjects, defaultSubjectId]);
 
   const validate = () => {
     const errs: Record<string, string> = {};

@@ -16,16 +16,6 @@ import {
   AcademicNotification,
   ReflectionJournalEntry,
 } from '../types';
-import {
-  INITIAL_SUBJECTS,
-  INITIAL_TASKS,
-  INITIAL_TODAY_SESSIONS,
-  INITIAL_ALL_SESSIONS,
-  INITIAL_AVAILABILITY,
-  INITIAL_ANNOUNCEMENTS,
-  INITIAL_NOTIFICATIONS,
-  INITIAL_JOURNAL_ENTRIES,
-} from '../data/mockData';
 import { useToast } from './ToastContext';
 import { useAuth } from './AuthContext';
 import {
@@ -38,6 +28,7 @@ import { availabilityService } from '../services/availabilityService';
 import { scheduleService } from '../services/scheduleService';
 import { notificationService } from '../services/notificationService';
 import { adminService } from '../services/adminService';
+import { formatCurrentWeekLabel, toLocalDateKey } from '../utils/date';
 
 interface PlannerContextType {
   subjects: Subject[];
@@ -69,7 +60,7 @@ interface PlannerContextType {
   addSession: (session: Omit<ScheduledSession, 'id'>) => Promise<ScheduledSession | null>;
   updateSession: (id: string, updates: Partial<ScheduledSession>) => Promise<ScheduledSession | null>;
   deleteSession: (id: string) => Promise<boolean>;
-  toggleSessionComplete: (id: string) => Promise<void>;
+  toggleSessionComplete: (id: string, actualMinutesLogged?: number) => Promise<void>;
   toggleSessionLock: (id: string) => Promise<void>;
   setSessionStatus: (id: string, status: SessionStatus) => Promise<void>;
 
@@ -83,9 +74,9 @@ interface PlannerContextType {
   generateSchedule: (options: Partial<ScheduleGenerationOptions>) => { generatedCount: number; warnings: string[] };
 
   // Admin actions
-  addAnnouncement: (announcement: Omit<Announcement, 'id' | 'publishedAt'>) => Promise<void>;
-  updateAnnouncement: (id: string, updates: Partial<Announcement>) => Promise<void>;
-  deleteAnnouncement: (id: string) => Promise<void>;
+  addAnnouncement: (announcement: Omit<Announcement, 'id' | 'publishedAt'>) => Promise<boolean>;
+  updateAnnouncement: (id: string, updates: Partial<Announcement>) => Promise<boolean>;
+  deleteAnnouncement: (id: string) => Promise<boolean>;
 
   // Notifications actions
   markNotificationRead: (id: string) => Promise<void>;
@@ -98,8 +89,6 @@ interface PlannerContextType {
   // Reflection Journal actions
   addJournalEntry: (entry: { content: string; weekLabel?: string; rating?: 'balanced' | 'challenging' | 'overloaded' }) => void;
 
-  // Reset
-  resetDemoData: () => Promise<void>;
 }
 
 const PlannerContext = createContext<PlannerContextType | undefined>(undefined);
@@ -118,39 +107,63 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [notifications, setNotifications] = useState<AcademicNotification[]>([]);
 
-  const [journalEntries, setJournalEntries] = useState<ReflectionJournalEntry[]>(() => {
-    const saved = localStorage.getItem('studyflow_journal');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return INITIAL_JOURNAL_ENTRIES;
-      }
-    }
-    return INITIAL_JOURNAL_ENTRIES;
-  });
+  const [journalEntries, setJournalEntries] = useState<ReflectionJournalEntry[]>([]);
+  const [journalOwnerId, setJournalOwnerId] = useState<string | null>(null);
 
   useEffect(() => {
-    localStorage.setItem('studyflow_journal', JSON.stringify(journalEntries));
-  }, [journalEntries]);
+    if (!user?.id) {
+      setJournalEntries([]);
+      setJournalOwnerId(null);
+      return;
+    }
+
+    const storageKey = `studyflow_journal_${user.id}`;
+    const saved = localStorage.getItem(storageKey);
+    if (!saved) {
+      setJournalEntries([]);
+      setJournalOwnerId(user.id);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(saved);
+      setJournalEntries(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setJournalEntries([]);
+    }
+    setJournalOwnerId(user.id);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || journalOwnerId !== user.id) return;
+    localStorage.setItem(`studyflow_journal_${user.id}`, JSON.stringify(journalEntries));
+  }, [journalEntries, journalOwnerId, user?.id]);
 
   /**
    * Loads all live planner entities concurrently from PostgreSQL
    */
   const refreshData = useCallback(async () => {
     if (!isAuthenticated) {
-      setSubjects(INITIAL_SUBJECTS);
-      setTasks(INITIAL_TASKS);
-      setSessions(INITIAL_ALL_SESSIONS);
-      setAvailability(INITIAL_AVAILABILITY);
-      setAnnouncements(INITIAL_ANNOUNCEMENTS);
-      setNotifications(INITIAL_NOTIFICATIONS);
+      setSubjects([]);
+      setTasks([]);
+      setSessions([]);
+      setAvailability([]);
+      setAnnouncements([]);
+      setNotifications([]);
+      setError(null);
       setIsLoading(false);
       return;
     }
 
     setIsLoading(true);
     setError(null);
+    // Never leave one account's planner entities visible while another account loads.
+    setSubjects([]);
+    setTasks([]);
+    setSessions([]);
+    setAvailability([]);
+    setAnnouncements([]);
+    setNotifications([]);
 
     try {
       const [
@@ -215,10 +228,10 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     return notifications.filter((n) => !n.read).length;
   }, [notifications]);
 
-  // Derived today sessions (default to term anchor 2026-10-06 or current system date)
+  // Derived sessions for the user's real local calendar date.
   const todaySessions = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    return sessions.filter((s) => s.date === '2026-10-06' || s.date === todayStr);
+    const todayStr = toLocalDateKey();
+    return sessions.filter((s) => s.date === todayStr && s.status !== 'cancelled');
   }, [sessions]);
 
   // Compute live conflicts
@@ -361,13 +374,17 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const toggleSessionComplete = async (id: string) => {
+  const toggleSessionComplete = async (id: string, actualMinutesLogged?: number) => {
     const session = sessions.find((s) => s.id === id);
     if (!session) return;
 
     const nextStatus: SessionStatus = session.status === 'completed' || session.completed ? 'scheduled' : 'completed';
     try {
-      const updated = await scheduleService.updateStatus(id, nextStatus, nextStatus === 'completed' ? session.durationMinutes : 0);
+      const updated = await scheduleService.updateStatus(
+        id,
+        nextStatus,
+        nextStatus === 'completed' ? actualMinutesLogged ?? session.durationMinutes : undefined
+      );
       setSessions((prev) => prev.map((s) => (s.id === id ? updated : s)));
 
       // Sync updated task remaining hours
@@ -401,6 +418,8 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
       const actualMinutes = status === 'completed' && session ? session.durationMinutes : undefined;
       const updated = await scheduleService.updateStatus(id, status, actualMinutes);
       setSessions((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      const refreshedTasks = await taskService.list().catch(() => null);
+      if (refreshedTasks) setTasks(refreshedTasks);
       showToast(`Session marked as ${status}`, 'info');
     } catch (err: any) {
       showToast(err.message || 'Failed to update session status', 'error');
@@ -526,8 +545,10 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
       }
 
       showToast(`Broadcasted announcement: "${newAnn.title}"`, 'success');
+      return true;
     } catch (err: any) {
       showToast(err.message || 'Failed to broadcast announcement', 'error');
+      return false;
     }
   };
 
@@ -536,8 +557,10 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
       const res = await adminService.updateAnnouncement(id, updates);
       setAnnouncements((prev) => prev.map((ann) => (ann.id === id ? res.data : ann)));
       showToast('Announcement updated', 'info');
+      return true;
     } catch (err: any) {
       showToast(err.message || 'Failed to update announcement', 'error');
+      return false;
     }
   };
 
@@ -546,8 +569,10 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
       await adminService.deleteAnnouncement(id);
       setAnnouncements((prev) => prev.filter((ann) => ann.id !== id));
       showToast('Announcement removed', 'info');
+      return true;
     } catch (err: any) {
       showToast(err.message || 'Failed to delete announcement', 'error');
+      return false;
     }
   };
 
@@ -621,18 +646,13 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
   }) => {
     const newEntry: ReflectionJournalEntry = {
       id: `ref_${Date.now()}`,
-      date: new Date().toISOString().split('T')[0],
-      weekLabel: entry.weekLabel || 'Week 7 Mid-Term Check',
+      date: toLocalDateKey(),
+      weekLabel: entry.weekLabel || `Week of ${formatCurrentWeekLabel()}`,
       content: entry.content,
       rating: entry.rating || 'balanced',
     };
     setJournalEntries((prev) => [newEntry, ...prev]);
     showToast('Reflection saved to academic study journal', 'success');
-  };
-
-  const resetDemoData = async () => {
-    await refreshData();
-    showToast('Data refreshed from PostgreSQL database', 'info');
   };
 
   return (
@@ -679,7 +699,6 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         clearAllNotifications,
         addNotification,
         addJournalEntry,
-        resetDemoData,
       }}
     >
       {children}

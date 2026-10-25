@@ -27,7 +27,7 @@ interface FocusTimerModalProps {
   session: ScheduledSession | null;
   task: Task | null;
   subject: Subject | null;
-  onCompleteSession: (sessionId: string) => void;
+  onCompleteSession: (sessionId: string, actualMinutesLogged: number) => void;
 }
 
 export function FocusTimerModal({
@@ -91,9 +91,13 @@ export function FocusTimerModal({
 
   const handleCompleteAndLog = () => {
     if (session) {
-      onCompleteSession(session.id);
+      const actualMinutesLogged = Math.max(
+        0,
+        Math.round((selectedMinutes * 60 - secondsRemaining) / 60)
+      );
+      onCompleteSession(session.id, actualMinutesLogged);
       showToast(
-        `Logged ${Math.round((selectedMinutes * 60 - secondsRemaining) / 60) || selectedMinutes} minutes for ${subject?.code || 'course'}`,
+        `Logged ${actualMinutesLogged} minutes for ${subject?.code || 'course'}`,
         'success'
       );
     }

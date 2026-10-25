@@ -19,8 +19,12 @@ export function DeadlineWorkloadHorizon({
   subjects,
 }: DeadlineWorkloadHorizonProps) {
   // Sort incomplete tasks by dueDate ascending
+  const horizonEnd = Date.now() + 10 * 24 * 60 * 60 * 1000;
   const upcomingTasks = tasks
-    .filter((t) => t.status !== 'completed')
+    .filter((t) => {
+      const dueAt = new Date(t.dueDate).getTime();
+      return t.status !== 'completed' && Number.isFinite(dueAt) && dueAt <= horizonEnd;
+    })
     .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
 
   const subjectsMap = new Map(subjects.map((s) => [s.id, s]));

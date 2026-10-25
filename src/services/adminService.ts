@@ -147,6 +147,13 @@ export const adminService = {
     );
   },
 
+  async updateUser(userId: string, data: { role?: string; name?: string; major?: string }) {
+    return apiClient.patch<{ success: boolean; message: string; data: any }>(
+      `/admin/users/${userId}`,
+      data
+    );
+  },
+
   /**
    * Updates user status/term/major with automatic audit logging.
    */
@@ -198,6 +205,60 @@ export const adminService = {
    */
   async getCatalog(): Promise<{ success: boolean; data: CatalogCourse[]; meta: any }> {
     return apiClient.get<{ success: boolean; data: CatalogCourse[]; meta: any }>('/admin/catalog');
+  },
+
+  /**
+   * Provisions a new user account with role and initial credentials.
+   */
+  async provisionUser(data: { name: string; email: string; role: string; major?: string; password?: string }) {
+    return apiClient.post<{ success: boolean; message: string; data: DirectoryUser }>('/admin/users', data);
+  },
+
+  /**
+   * Deletes a user account with audit logging.
+   */
+  async deleteUser(userId: string) {
+    return apiClient.delete<{ success: boolean; message: string }>(`/admin/users/${userId}`);
+  },
+
+  /**
+   * Adds a master course to institutional curriculum catalog.
+   */
+  async createCatalogCourse(data: Partial<CatalogCourse>) {
+    return apiClient.post<{ success: boolean; message: string; data: CatalogCourse }>('/admin/catalog', data);
+  },
+
+  /**
+   * Updates master course parameters in the institutional catalog.
+   */
+  async updateCatalogCourse(code: string, data: Partial<CatalogCourse>) {
+    return apiClient.patch<{ success: boolean; message: string; data?: CatalogCourse }>(
+      `/admin/catalog/${encodeURIComponent(code)}`,
+      data
+    );
+  },
+
+  /**
+   * Removes a course from the institutional master curriculum.
+   */
+  async deleteCatalogCourse(code: string) {
+    return apiClient.delete<{ success: boolean; message: string }>(
+      `/admin/catalog/${encodeURIComponent(code)}`
+    );
+  },
+
+  /**
+   * Retrieves institutional governance settings.
+   */
+  async getSettings(): Promise<{ success: boolean; data: any }> {
+    return apiClient.get('/admin/settings');
+  },
+
+  /**
+   * Updates institutional governance settings with audit logging.
+   */
+  async updateSettings(data: any): Promise<{ success: boolean; message: string; data: any }> {
+    return apiClient.patch('/admin/settings', data);
   },
 
   /**

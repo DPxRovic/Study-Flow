@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
 import { authService, RegisterPayload } from '../services/authService';
 import { apiClient } from '../services/apiClient';
@@ -27,14 +27,13 @@ interface AuthContextType {
   role: UserRole;
   isAuthenticated: boolean;
   isInitializing: boolean;
-  login: (email: string, password?: string) => Promise<LoginResult>;
+  login: (email: string, password: string) => Promise<LoginResult>;
   register: (data: RegisterData) => Promise<LoginResult>;
   logout: () => Promise<void>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; emailExists: boolean }>;
   forgotPassword: (email: string) => Promise<{ success: boolean; message: string }>;
   verifyResetCode: (email: string, code: string) => Promise<{ success: boolean; message: string; resetToken?: string }>;
   resetPassword: (email: string, resetToken: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
-  switchRole: (role: UserRole) => Promise<void>;
   updateUserPreferences: (prefs: Partial<User>) => Promise<void>;
 }
 
@@ -94,7 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   /**
    * Real API Login with backend JWT authentication
    */
-  const login = async (email: string, password = 'studyflow2026'): Promise<LoginResult> => {
+  const login = async (email: string, password: string): Promise<LoginResult> => {
     try {
       const res = await authService.login(email.trim(), password);
       if (res.success && res.user) {
@@ -188,18 +187,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Role Switcher for instant testing / demonstration
-   * Authenticates as the corresponding verified database user
-   */
-  const switchRole = useCallback(async (newRole: UserRole) => {
-    if (newRole === 'admin') {
-      await login('e.vance@university.edu', 'studyflow2026');
-    } else {
-      await login('m.lin@university.edu', 'studyflow2026');
-    }
-  }, []);
-
-  /**
    * Real API user preference updates persisted to PostgreSQL
    */
   const updateUserPreferences = async (prefs: Partial<User>) => {
@@ -227,7 +214,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         forgotPassword,
         verifyResetCode,
         resetPassword,
-        switchRole,
         updateUserPreferences,
       }}
     >

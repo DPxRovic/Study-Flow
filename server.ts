@@ -7,6 +7,10 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+if (process.argv.includes('--production')) {
+  process.env.NODE_ENV = 'production';
+}
+
 // 2. Now safely import everything else
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
@@ -28,6 +32,12 @@ async function start() {
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
   app.use('/api', apiRoutes);
+  app.use('/api', (_req, res) => {
+    res.status(404).json({
+      success: false,
+      error: { code: 404, message: 'API route not found' },
+    });
+  });
   app.use(errorHandler);
 
   if (process.env.NODE_ENV === 'production') {
@@ -43,8 +53,8 @@ async function start() {
     app.use(vite.middlewares);
   }
 
-  app.listen(config.port, '0.0.0.0', () => {
-    console.log(`[StudyFlow] Academic server running on port ${config.port}`);
+  app.listen(config.port, config.host, () => {
+    console.log(`[StudyFlow] Academic server running on ${config.host}:${config.port}`);
     console.log(`→ http://localhost:${config.port}`);
   });
 }

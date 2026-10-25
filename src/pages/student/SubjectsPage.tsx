@@ -22,14 +22,27 @@ import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { usePlanner } from '../../context/PlannerContext';
+import { useAuth } from '../../context/AuthContext';
 import { Subject, SubjectCategory, Task } from '../../types';
 import { SUBJECT_CATEGORY_STYLES } from '../../theme/tokens';
 import { SubjectModal } from '../../components/subjects/SubjectModal';
 import { SubjectDetailModal } from '../../components/subjects/SubjectDetailModal';
 import { TaskModal } from '../../components/tasks/TaskModal';
+import { TaskDetailModal } from '../../components/tasks/TaskDetailModal';
 
 export function SubjectsPage() {
-  const { subjects, tasks, addSubject, updateSubject, deleteSubject, addTask } = usePlanner();
+  const { user } = useAuth();
+  const {
+    subjects,
+    tasks,
+    addSubject,
+    updateSubject,
+    deleteSubject,
+    addTask,
+    updateTask,
+    deleteTask,
+    toggleTaskCompleted,
+  } = usePlanner();
 
   // Modals state
   const [isSubjectModalOpen, setIsSubjectModalOpen] = useState(false);
@@ -39,6 +52,8 @@ export function SubjectsPage() {
   // Quick Task Creation for a Subject
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [preselectedSubjectId, setPreselectedSubjectId] = useState<string>('');
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
   // Course aggregate calculations
   const totalCredits = subjects.reduce((acc, s) => acc + s.credits, 0);
@@ -68,18 +83,38 @@ export function SubjectsPage() {
 
   const handleAddTaskForSubject = (subId: string) => {
     setPreselectedSubjectId(subId);
+    setEditingTask(null);
     setIsTaskModalOpen(true);
   };
 
+  const handleToggleSubtask = (taskId: string, subtaskId: string) => {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task?.subtasks) return;
+    updateTask(taskId, {
+      subtasks: task.subtasks.map((subtask) =>
+        subtask.id === subtaskId ? { ...subtask, completed: !subtask.completed } : subtask
+      ),
+    });
+  };
+
+  const handleDeleteSubject = (subjectId: string) => {
+    const subject = subjects.find((item) => item.id === subjectId);
+    const relatedTaskCount = tasks.filter((task) => task.subjectId === subjectId).length;
+    if (!window.confirm(
+      `Drop ${subject?.code || 'this course'}? This also removes ${relatedTaskCount} related task${relatedTaskCount === 1 ? '' : 's'} and their study sessions.`
+    )) return;
+    deleteSubject(subjectId);
+  };
+
   return (
-    <div className="space-y-7 max-w-5xl pb-16">
+    <div className="space-y-7 max-w-[1440px] w-full pb-16 font-sans">
       {/* =========================================================================
           1. HEADER & ENROLLMENT SUMMARY
          ========================================================================= */}
       <div className="border-b border-slate-200/80 pb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <div className="text-xs text-slate-500 font-semibold mb-1">
-            Curriculum Structure · Fall 2026 Term
+            Curriculum Structure · {user?.term || 'Current Term'}
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
             Enrolled Courses & Subjects
@@ -165,9 +200,9 @@ export function SubjectsPage() {
       {subjects.length === 0 ? (
         <EmptyState
           icon={<BookOpen className="w-6 h-6 text-sky-600" />}
-          title="No courses enrolled"
+          title="Add your first course"
           description="Enroll in your semester courses to configure study targets and plan your academic week."
-          actionLabel="Enroll First Subject"
+          actionLabel="Add Your First Course"
           onAction={handleOpenAdd}
         />
       ) : (
@@ -284,7 +319,7 @@ export function SubjectsPage() {
                     </Button>
 
                     <button
-                      onClick={() => deleteSubject(sub.id)}
+                      onClick={() => handleDeleteSubject(sub.id)}
                       className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
                       title="Drop course"
                     >
@@ -323,28 +358,48 @@ export function SubjectsPage() {
           handleOpenEdit(sub);
         }}
         onDelete={(subId) => {
-          deleteSubject(subId);
+          handleDeleteSubject(subId);
           setSelectedSubject(null);
         }}
         onAddTaskForSubject={(subId) => {
           handleAddTaskForSubject(subId);
         }}
-        onSelectTask={(task) => {
-          // Open quick task view
-        }}
+        onSelectTask={setSelectedTask}
       />
 
       {/* Task Creation Modal Pre-linked to Subject */}
       <TaskModal
         isOpen={isTaskModalOpen}
-        onClose={() => setIsTaskModalOpen(false)}
-        subjects={subjects}
-        onSave={(taskData) => {
-          addTask({
-            ...taskData,
-            subjectId: preselectedSubjectId || taskData.subjectId,
-          });
+        onClose={() => {
+          setIsTaskModalOpen(false);
+          setEditingTask(null);
         }}
+        subjects={subjects}
+        taskToEdit={editingTask}
+        defaultSubjectId={preselectedSubjectId}
+        onSave={(taskData, id) => {
+          if (id) updateTask(id, taskData);
+          else addTask(taskData);
+        }}
+      />
+
+      <TaskDetailModal
+        task={selectedTask}
+        subject={subjects.find((subject) => subject.id === selectedTask?.subjectId)}
+        isOpen={!!selectedTask}
+        onClose={() => setSelectedTask(null)}
+        onEdit={(task) => {
+          setEditingTask(task);
+          setPreselectedSubjectId(task.subjectId);
+          setIsTaskModalOpen(true);
+        }}
+        onDelete={(taskId) => {
+          if (window.confirm('Delete this assignment? This cannot be undone.')) {
+            deleteTask(taskId);
+          }
+        }}
+        onToggleComplete={toggleTaskCompleted}
+        onToggleSubtask={handleToggleSubtask}
       />
     </div>
   );

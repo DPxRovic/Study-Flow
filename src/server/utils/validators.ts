@@ -102,8 +102,8 @@ export function validatePassword(password: string): string {
   if (password.length < 6) {
     throw ApiError.badRequest('Password must be at least 6 characters long');
   }
-  if (password.length > 128) {
-    throw ApiError.badRequest('Password cannot exceed 128 characters');
+  if (Buffer.byteLength(password, 'utf8') > 72) {
+    throw ApiError.badRequest('Password cannot exceed 72 UTF-8 bytes');
   }
   return password;
 }
@@ -134,6 +134,13 @@ export function validateNumber(val: any, fieldName: string, min = 0, max = 1000)
     throw ApiError.badRequest(`${fieldName} must be between ${min} and ${max}`);
   }
   return num;
+}
+
+export function validateBoolean(val: any, fieldName: string): boolean {
+  if (typeof val !== 'boolean') {
+    throw ApiError.badRequest(`${fieldName} must be a boolean`);
+  }
+  return val;
 }
 
 export function validateDayOfWeek(dayOfWeek: any): number {
@@ -253,6 +260,15 @@ export function validateDateFormat(date: string, fieldName: string): string {
   if (!dateRegex.test(date)) {
     throw ApiError.badRequest(`${fieldName} must follow YYYY-MM-DD format (e.g. 2026-10-12)`);
   }
+  const [year, month, day] = date.split('-').map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    throw ApiError.badRequest(`${fieldName} contains an impossible calendar date`);
+  }
   return date;
 }
 
@@ -260,6 +276,11 @@ export function validateIsoDateTime(dateTime: string, fieldName: string): Date {
   if (!dateTime || typeof dateTime !== 'string') {
     throw ApiError.badRequest(`${fieldName} must be a valid ISO date-time string`);
   }
+  const isoDateTimeRegex = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,3})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$/;
+  if (!isoDateTimeRegex.test(dateTime)) {
+    throw ApiError.badRequest(`${fieldName} must use ISO 8601 date-time format`);
+  }
+  validateDateFormat(dateTime.slice(0, 10), fieldName);
   const parsed = new Date(dateTime);
   if (isNaN(parsed.getTime())) {
     throw ApiError.badRequest(`${fieldName} contains an invalid date value`);

@@ -21,6 +21,7 @@ import { usePlanner } from '../../context/PlannerContext';
 import { SUBJECT_CATEGORY_STYLES } from '../../theme/tokens';
 import { Badge, PriorityBadge } from '../ui/Badge';
 import { timeToMinutes } from '../../utils/scheduleGenerator';
+import { getLocalWeekDays, toLocalDateKey } from '../../utils/date';
 
 export interface WeeklyTimeGridProps {
   onSelectSession: (session: ScheduledSession) => void;
@@ -33,19 +34,10 @@ export function WeeklyTimeGrid({
 }: WeeklyTimeGridProps) {
   const { sessions, tasks, subjects, availability, conflicts } = usePlanner();
 
-  // Days in Fall 2026 Week 7
-  const weekDays = [
-    { date: '2026-10-05', dayOfWeek: 1, name: 'Mon', fullDate: 'Oct 5' },
-    { date: '2026-10-06', dayOfWeek: 2, name: 'Tue', fullDate: 'Oct 6', isToday: true },
-    { date: '2026-10-07', dayOfWeek: 3, name: 'Wed', fullDate: 'Oct 7' },
-    { date: '2026-10-08', dayOfWeek: 4, name: 'Thu', fullDate: 'Oct 8' },
-    { date: '2026-10-09', dayOfWeek: 5, name: 'Fri', fullDate: 'Oct 9' },
-    { date: '2026-10-10', dayOfWeek: 6, name: 'Sat', fullDate: 'Oct 10' },
-    { date: '2026-10-11', dayOfWeek: 0, name: 'Sun', fullDate: 'Oct 11' },
-  ];
+  const weekDays = getLocalWeekDays();
 
   // Mobile selected day state
-  const [selectedMobileDate, setSelectedMobileDate] = useState('2026-10-06');
+  const [selectedMobileDate, setSelectedMobileDate] = useState(toLocalDateKey());
 
   // Time grid parameters: 08:00 (480 mins) to 22:00 (1320 mins)
   const START_HOUR = 8;
@@ -68,8 +60,8 @@ export function WeeklyTimeGrid({
     return { top, height };
   };
 
-  // Current time anchor for Tuesday Oct 6 at 14:15
-  const currentHourFraction = 14.25;
+  const now = new Date();
+  const currentHourFraction = now.getHours() + now.getMinutes() / 60;
   const currentTimeTop = (currentHourFraction - START_HOUR) * HOUR_HEIGHT;
 
   return (

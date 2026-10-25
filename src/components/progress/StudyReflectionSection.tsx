@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { BookOpen, Send, Calendar, CheckCircle2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ReflectionJournalEntry } from '../../types';
+import { formatCurrentWeekLabel } from '../../utils/date';
 
 interface StudyReflectionSectionProps {
   journalEntries: ReflectionJournalEntry[];
@@ -32,7 +33,7 @@ export function StudyReflectionSection({
     setIsSubmitting(true);
     onAddEntry({
       content: reflectionNote.trim(),
-      weekLabel: 'Week 7 Mid-Term Check',
+      weekLabel: `Week of ${formatCurrentWeekLabel()}`,
       rating,
     });
     setReflectionNote('');
@@ -154,6 +155,15 @@ export function StudyReflectionSection({
               </div>
             ))}
           </div>
+        </div>
+      )}
+      {journalEntries.length === 0 && (
+        <div className="pt-4 border-t border-slate-100 text-center space-y-1.5">
+          <Calendar className="w-5 h-5 text-slate-300 mx-auto" />
+          <p className="text-xs font-bold text-slate-700">No reflections yet</p>
+          <p className="text-[11px] text-slate-500">
+            Your first weekly reflection will appear here after you save it.
+          </p>
         </div>
       )}
     </div>

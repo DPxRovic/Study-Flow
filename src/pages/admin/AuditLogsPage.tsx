@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   ShieldCheck,
   Search,
@@ -44,6 +44,7 @@ export function AuditLogsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const latestRequestId = useRef(0);
 
   // Filter & Search State
   const [page, setPage] = useState(1);
@@ -60,6 +61,7 @@ export function AuditLogsPage() {
 
   // Fetch audit records & stats from backend
   const loadData = async (isManualRefresh = false) => {
+    const requestId = ++latestRequestId.current;
     if (isManualRefresh) setIsRefreshing(true);
     else setIsLoading(true);
 
@@ -94,6 +96,8 @@ export function AuditLogsPage() {
         adminService.getAuditStats().catch(() => null),
       ]);
 
+      if (requestId !== latestRequestId.current) return;
+
       if (logsRes && logsRes.success) {
         setLogs(logsRes.data || []);
         setTotalCount(logsRes.meta?.total || 0);
@@ -108,26 +112,25 @@ export function AuditLogsPage() {
         showToast('Audit trail reloaded from PostgreSQL records', 'info');
       }
     } catch (err: any) {
+      if (requestId !== latestRequestId.current) return;
       console.error('Failed to load audit logs:', err);
       showToast(err.message || 'Failed to retrieve audit trail from server', 'error');
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (requestId === latestRequestId.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
-    loadData();
-  }, [page, limit, selectedCategory, selectedAction, sortOrder, dateRangeFilter]);
-
-  // Debounced search trigger
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setPage(1);
-      loadData();
-    }, 300);
+    const timer = setTimeout(() => loadData(), search ? 300 : 0);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [page, limit, selectedCategory, selectedAction, sortOrder, dateRangeFilter, search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, selectedCategory, selectedAction, sortOrder, dateRangeFilter]);
 
   // Inspect record in modal
   const handleInspect = async (log: AuditLogRecord) => {
@@ -217,7 +220,7 @@ export function AuditLogsPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-6xl pb-16 font-sans">
+    <div className="space-y-6 max-w-[1440px] w-full pb-16 font-sans">
       {/* 1. Header & Quick Actions */}
       <div className="border-b border-slate-200/90 pb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
@@ -495,12 +498,12 @@ export function AuditLogsPage() {
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-slate-200/80 bg-slate-50/40 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                  <th className="py-3 px-4">Timestamp (UTC)</th>
-                  <th className="py-3 px-4">Action</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Administrator</th>
-                  <th className="py-3 px-4">Details</th>
-                  <th className="py-3 px-4 text-right">Details</th>
+                  <th className="py-3.5 px-4 w-44">Timestamp (UTC)</th>
+                  <th className="py-3.5 px-4 w-40">Action</th>
+                  <th className="py-3.5 px-4 w-36">Category</th>
+                  <th className="py-3.5 px-4 w-48">Administrator</th>
+                  <th className="py-3.5 px-4">Event Details</th>
+                  <th className="py-3.5 px-5 text-right w-20">Inspect</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -548,8 +551,8 @@ export function AuditLogsPage() {
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 max-w-md">
-                        <p className="text-slate-700 font-medium truncate group-hover:text-slate-900">
+                      <td className="py-3.5 px-4">
+                        <p className="text-slate-700 font-medium break-words block line-clamp-2 group-hover:text-slate-900">
                           {log.details || '—'}
                         </p>
                         {log.targetType && (
@@ -559,7 +562,7 @@ export function AuditLogsPage() {
                         )}
                       </td>
 
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                      <td className="py-3.5 px-5 text-right whitespace-nowrap">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

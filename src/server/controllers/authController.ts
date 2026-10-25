@@ -103,8 +103,8 @@ export class AuthController {
       const { email, password } = req.body;
 
       const validEmail = validateEmail(email);
-      if (!password) {
-        throw ApiError.badRequest('Password is required');
+      if (typeof password !== 'string' || password.length === 0) {
+        throw ApiError.unauthorized('Invalid email or password');
       }
 
       const user = await prisma.user.findUnique({

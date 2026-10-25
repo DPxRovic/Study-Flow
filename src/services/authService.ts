@@ -41,10 +41,10 @@ export const authService = {
     };
   },
 
-  async login(email: string, password?: string): Promise<AuthResponse> {
+  async login(email: string, password: string): Promise<AuthResponse> {
     const res = await apiClient.post<any>('/auth/login', {
       email,
-      password: password || 'studyflow2026',
+      password,
     });
     if (res.token) {
       apiClient.setToken(res.token);

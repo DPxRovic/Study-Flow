@@ -154,7 +154,7 @@ export class NotificationController {
       const in48Hours = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 
       // Fetch active deliverables and announcements
-      const [activeTasks, existingNotifs, announcements] = await Promise.all([
+      const [activeTasks, existingNotifs, currentUser] = await Promise.all([
         prisma.task.findMany({
           where: {
             userId,
@@ -168,11 +168,21 @@ export class NotificationController {
           where: { userId },
           select: { relatedId: true, category: true },
         }),
-        prisma.announcement.findMany({
-          where: { status: 'published' },
-          take: 5,
-        }),
+        prisma.user.findUnique({ where: { id: userId }, select: { major: true } }),
       ]);
+
+      const major = currentUser?.major?.toLowerCase() || '';
+      const cohorts = ['all', 'undergrad'];
+      if (/computer|engineering|math|science|biology|chemistry|physics|stem/.test(major)) cohorts.push('stem');
+      if (/humanit|history|philosophy|language|literature|arts/.test(major)) cohorts.push('humanities');
+      const announcements = await prisma.announcement.findMany({
+        where: {
+          status: 'published',
+          targetCohort: { in: cohorts },
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+        orderBy: { publishedAt: 'desc' },
+      });
 
       const existingSet = new Set(existingNotifs.map((n: any) => `${n.category}:${n.relatedId}`));
       const newNotificationsToCreate: any[] = [];

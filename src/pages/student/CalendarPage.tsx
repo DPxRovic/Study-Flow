@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
@@ -22,6 +23,7 @@ import {
   Info,
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
+import { EmptyState } from '../../components/ui/EmptyState';
 import { Badge, PriorityBadge } from '../../components/ui/Badge';
 import { usePlanner } from '../../context/PlannerContext';
 import { useToast } from '../../context/ToastContext';
@@ -32,8 +34,10 @@ import { WeeklyTimeGrid } from '../../components/schedule/WeeklyTimeGrid';
 import { DailyTimeline } from '../../components/schedule/DailyTimeline';
 import { SessionDetailModal } from '../../components/schedule/SessionDetailModal';
 import { SessionEditModal } from '../../components/schedule/SessionEditModal';
+import { formatLongLocalDate, toLocalDateKey } from '../../utils/date';
 
 export function CalendarPage() {
+  const navigate = useNavigate();
   const {
     tasks,
     subjects,
@@ -47,9 +51,18 @@ export function CalendarPage() {
   // Calendar View Mode: 'month' | 'week' | 'day'
   const [calendarView, setCalendarView] = useState<'month' | 'week' | 'day'>('month');
 
-  // Selected date state (defaults to anchor Tuesday Oct 6, 2026)
-  const [selectedDayNumber, setSelectedDayNumber] = useState(6);
-  const selectedDateStr = `2026-10-${String(selectedDayNumber).padStart(2, '0')}`;
+  const today = new Date();
+  const todayKey = toLocalDateKey(today);
+  const [visibleMonth, setVisibleMonth] = useState(
+    () => new Date(today.getFullYear(), today.getMonth(), 1)
+  );
+  const [selectedDayNumber, setSelectedDayNumber] = useState(today.getDate());
+  const selectedDate = new Date(
+    visibleMonth.getFullYear(),
+    visibleMonth.getMonth(),
+    selectedDayNumber
+  );
+  const selectedDateStr = toLocalDateKey(selectedDate);
 
   // Modals state
   const [selectedSessionForDetail, setSelectedSessionForDetail] = useState<ScheduledSession | null>(null);
@@ -58,15 +71,38 @@ export function CalendarPage() {
   const [initialEditDate, setInitialEditDate] = useState<string | undefined>(undefined);
   const [initialEditTime, setInitialEditTime] = useState<string | undefined>(undefined);
 
-  // Month information: October 2026
-  const currentMonthName = 'October 2026';
-  const daysInMonth = Array.from({ length: 31 }, (_, i) => i + 1);
+  const currentMonthName = visibleMonth.toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  });
+  const daysInMonth = Array.from(
+    { length: new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate() },
+    (_, i) => i + 1
+  );
+  const firstDayOffset = new Date(
+    visibleMonth.getFullYear(),
+    visibleMonth.getMonth(),
+    1
+  ).getDay();
+
+  const moveMonth = (offset: number) => {
+    const nextMonth = new Date(
+      visibleMonth.getFullYear(),
+      visibleMonth.getMonth() + offset,
+      1
+    );
+    const isCurrentMonth =
+      nextMonth.getFullYear() === today.getFullYear() &&
+      nextMonth.getMonth() === today.getMonth();
+    setVisibleMonth(nextMonth);
+    setSelectedDayNumber(isCurrentMonth ? today.getDate() : 1);
+  };
 
   // Handle RFC 5545 iCalendar export
   const handleExportICS = () => {
     try {
       exportCalendarToICS({ sessions, tasks, subjects, availability });
-      showToast('Downloaded calendar subscription file (StudyFlow_Schedule_Fall2026.ics)', 'success');
+      showToast('Downloaded StudyFlow calendar file', 'success');
     } catch {
       showToast('Unable to generate ICS file', 'error');
     }
@@ -91,16 +127,10 @@ export function CalendarPage() {
 
   // Sessions for the currently selected day in month view
   const selectedDaySessions = sessions
-    .filter((s) => s.date === selectedDateStr)
+    .filter((s) => s.date === selectedDateStr && s.status !== 'cancelled')
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
-  // Determine weekday index for selected day (October 2026: Oct 1 is Thursday = 4)
-  const getDayOfWeekForOct2026 = (day: number) => {
-    const d = new Date(2026, 9, day); // month 9 is October
-    return d.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6;
-  };
-
-  const selectedDayOfWeek = getDayOfWeekForOct2026(selectedDayNumber);
+  const selectedDayOfWeek = selectedDate.getDay();
 
   // Recurring course lectures for the selected day
   const selectedDayLectures = availability
@@ -111,7 +141,7 @@ export function CalendarPage() {
   const selectedDayDeadlines = tasks.filter((t) => t.dueDate.startsWith(selectedDateStr));
 
   return (
-    <div className="space-y-6 max-w-7xl pb-16">
+    <div className="space-y-6 max-w-[1440px] w-full pb-16 font-sans">
       {/* =========================================================================
           1. HEADER & VIEW SWITCHER
          ========================================================================= */}
@@ -119,7 +149,7 @@ export function CalendarPage() {
         <div>
           <div className="text-xs text-slate-500 font-semibold mb-1 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-sky-500" />
-            <span>Academic Calendar Grid · Fall 2026</span>
+            <span>Academic Calendar Grid · {formatLongLocalDate(today)}</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
             Term Calendar & Commitments
@@ -177,6 +207,37 @@ export function CalendarPage() {
         </div>
       </div>
 
+      {sessions.length === 0 && (
+        <EmptyState
+          icon={<CalendarIcon className="w-7 h-7 text-sky-600" />}
+          title="No study sessions planned"
+          description={
+            subjects.length === 0
+              ? 'Add your first course, then record deadlines and availability to begin building a schedule.'
+              : tasks.length === 0
+              ? 'Add an assignment or exam so StudyFlow has coursework to place on your calendar.'
+              : !availability.some((slot) => slot.type === 'preferred_study')
+              ? 'Set a preferred study window so StudyFlow knows when you are available.'
+              : 'Your setup is ready. Generate your first schedule to add study sessions to the calendar.'
+          }
+          actionLabel={
+            subjects.length === 0
+              ? 'Add Your First Course'
+              : tasks.length === 0
+              ? 'Add Assignment or Exam'
+              : !availability.some((slot) => slot.type === 'preferred_study')
+              ? 'Set Weekly Availability'
+              : 'Open Schedule Generator'
+          }
+          onAction={() => {
+            if (subjects.length === 0) navigate('/subjects');
+            else if (tasks.length === 0) navigate('/tasks');
+            else if (!availability.some((slot) => slot.type === 'preferred_study')) navigate('/availability');
+            else navigate('/schedule');
+          }}
+        />
+      )}
+
       {/* =========================================================================
           2. VIEW RENDERER (MONTH / WEEK / DAY)
          ========================================================================= */}
@@ -192,18 +253,22 @@ export function CalendarPage() {
                 </div>
                 <div>
                   <span className="text-base font-extrabold text-slate-900">{currentMonthName}</span>
-                  <span className="text-[11px] text-slate-500 block">Fall Term · Midterm Period</span>
+                  <span className="text-[11px] text-slate-500 block">Monthly commitments and deadlines</span>
                 </div>
               </div>
 
               <div className="flex items-center gap-1">
                 <button
+                  type="button"
+                  onClick={() => moveMonth(-1)}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
                   aria-label="Previous month"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <button
+                  type="button"
+                  onClick={() => moveMonth(1)}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
                   aria-label="Next month"
                 >
@@ -225,21 +290,27 @@ export function CalendarPage() {
 
             {/* Calendar Day Cells */}
             <div className="grid grid-cols-7 gap-1.5">
-              {/* Offset for Oct 1 (Oct 1 2026 is Thursday: Sun, Mon, Tue, Wed are previous month days) */}
-              <div className="h-16 p-1.5 bg-slate-50/40 rounded-xl opacity-30 text-xs font-mono text-slate-400">27</div>
-              <div className="h-16 p-1.5 bg-slate-50/40 rounded-xl opacity-30 text-xs font-mono text-slate-400">28</div>
-              <div className="h-16 p-1.5 bg-slate-50/40 rounded-xl opacity-30 text-xs font-mono text-slate-400">29</div>
-              <div className="h-16 p-1.5 bg-slate-50/40 rounded-xl opacity-30 text-xs font-mono text-slate-400">30</div>
+              {Array.from({ length: firstDayOffset }, (_, index) => (
+                <div
+                  key={`offset-${index}`}
+                  className="h-16 p-1.5 bg-slate-50/40 rounded-xl opacity-30"
+                  aria-hidden="true"
+                />
+              ))}
 
               {daysInMonth.map((day) => {
-                const dayDateStr = `2026-10-${String(day).padStart(2, '0')}`;
+                const dayDateStr = toLocalDateKey(
+                  new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day)
+                );
                 const isSelected = selectedDayNumber === day;
-                const isToday = day === 6;
+                const isToday = dayDateStr === todayKey;
 
                 // Deadlines for this day
                 const dayDeadlines = tasks.filter((t) => t.dueDate.startsWith(dayDateStr));
                 // Scheduled study sessions for this day
-                const dayStudySessions = sessions.filter((s) => s.date === dayDateStr);
+                const dayStudySessions = sessions.filter(
+                  (s) => s.date === dayDateStr && s.status !== 'cancelled'
+                );
 
                 return (
                   <button
@@ -323,10 +394,14 @@ export function CalendarPage() {
             <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
               <div>
                 <div className="text-xs font-bold text-sky-600 uppercase tracking-wider">
-                  {selectedDayNumber === 6 ? 'Today’s Agenda' : 'Day Agenda'}
+                  {selectedDateStr === todayKey ? "Today's Agenda" : 'Day Agenda'}
                 </div>
                 <h2 className="text-base font-extrabold text-slate-900 mt-0.5">
-                  October {selectedDayNumber}, 2026
+                  {selectedDate.toLocaleDateString(undefined, {
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}
                 </h2>
               </div>
 
@@ -462,7 +537,7 @@ export function CalendarPage() {
               {selectedDaySessions.length === 0 && selectedDayLectures.length === 0 && (
                 <div className="py-8 text-center text-xs text-slate-400 space-y-2">
                   <CalendarIcon className="w-6 h-6 mx-auto text-slate-300" />
-                  <p>No study sessions or lectures allocated for October {selectedDayNumber}.</p>
+                  <p>No study sessions or lectures are planned for this date.</p>
                   <Button
                     variant="secondary"
                     size="sm"

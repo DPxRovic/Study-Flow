@@ -22,6 +22,8 @@ interface CoreMetricsGridProps {
   weeklyTargetHours: number;
   weeklyLoggedHours: number;
   dailyCapHours: number;
+  capAdherencePercentage: number;
+  capExceededDaysCount: number;
   imminentDeadlinesCount: number;
   attentionSubjectsCount: number;
 }
@@ -35,6 +37,8 @@ export function CoreMetricsGrid({
   weeklyTargetHours,
   weeklyLoggedHours,
   dailyCapHours,
+  capAdherencePercentage,
+  capExceededDaysCount,
   imminentDeadlinesCount,
   attentionSubjectsCount,
 }: CoreMetricsGridProps) {
@@ -103,7 +107,7 @@ export function CoreMetricsGrid({
         </div>
         <div className="flex items-baseline gap-2">
           <span className="text-2xl font-extrabold font-mono tabular-nums text-emerald-700">
-            100% Adherence
+            {capAdherencePercentage}% Adherence
           </span>
         </div>
         <div className="pt-1 flex items-center gap-1.5 text-xs text-slate-600 font-medium">
@@ -112,7 +116,9 @@ export function CoreMetricsGrid({
             {dailyCapHours.toFixed(1)}h/day
           </span>
           <span aria-hidden="true" className="text-slate-300">·</span>
-          <span className="text-slate-500">0 midnight overruns</span>
+          <span className="text-slate-500">
+            {capExceededDaysCount} cap overrun{capExceededDaysCount === 1 ? '' : 's'}
+          </span>
         </div>
       </div>
 
