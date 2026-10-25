@@ -80,7 +80,7 @@ export function WeeklyTimeGrid({
       <div className="hidden lg:block overflow-x-auto">
         <div className="min-w-[860px]">
           {/* Header Row: Time Axis Spacer + 7 Day Headers */}
-          <div className="grid grid-cols-[70px_repeat(7,1fr)] border-b border-slate-200/80 bg-slate-50/75 sticky top-0 z-20">
+          <div className="grid grid-cols-[70px_repeat(7,minmax(0,1fr))] border-b border-slate-200/80 bg-slate-50/75 sticky top-0 z-20">
             {/* Time corner header */}
             <div className="p-3 border-r border-slate-200/60 text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider flex items-center justify-center">
               Time
@@ -138,7 +138,7 @@ export function WeeklyTimeGrid({
 
           {/* Time Grid Canvas */}
           <div
-            className="grid grid-cols-[70px_repeat(7,1fr)] relative"
+            className="grid grid-cols-[70px_repeat(7,minmax(0,1fr))] relative"
             style={{ height: `${GRID_HEIGHT}px` }}
           >
             {/* Left Time Column */}
@@ -169,7 +169,6 @@ export function WeeklyTimeGrid({
               const dayClasses = availability.filter(
                 (a) => a.dayOfWeek === day.dayOfWeek && a.type !== 'preferred_study'
               );
-
               return (
                 <div
                   key={day.date}
