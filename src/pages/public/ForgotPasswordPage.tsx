@@ -40,6 +40,7 @@ export function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(null);
+  const [devCode, setDevCode] = useState<string | null>(null);
 
   // Field validation
   const validateEmail = (val: string) => {
@@ -80,6 +81,11 @@ export function ForgotPasswordPage() {
     try {
       const res = await forgotPassword(email);
       if (res.success) {
+        if (res.devCode) {
+          setDevCode(res.devCode);
+        } else {
+          setDevCode(null);
+        }
         setStep('CODE_VERIFICATION');
         showToast('Verification code sent! Please check your university inbox.', 'info');
       } else {
@@ -249,12 +255,25 @@ export function ForgotPasswordPage() {
                 setStep('EMAIL_ENTRY');
                 setCode('');
                 setErrorMessage(null);
+                setDevCode(null);
               }}
               className="text-sky-700 hover:text-sky-900 font-bold underline ml-2 cursor-pointer text-[11px]"
             >
               Change
             </button>
           </div>
+
+          {devCode && (
+            <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 space-y-1.5 animate-in fade-in duration-200">
+              <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                School Project Demonstration Mode
+              </div>
+              <p className="text-[11px] text-amber-700 leading-relaxed">
+                Resend Sandbox restricts external inbox delivery. Test recovery code: <strong className="font-mono text-xs tracking-wider bg-white px-2 py-0.5 rounded border border-amber-300 text-amber-950 font-extrabold">{devCode}</strong> (also logged to server terminal).
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1">
             <label className="block text-xs font-bold text-slate-700">

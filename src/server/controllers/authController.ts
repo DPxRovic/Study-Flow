@@ -303,20 +303,62 @@ export class AuthController {
       });
 
       if (!emailResult.success) {
-        console.error('[ForgotPassword] Email dispatch error:', emailResult.error);
-        throw ApiError.internal(
-          'Email delivery service encountered an issue. Please contact support or retry later.'
+        // Record tamper-evident audit event for failed email delivery
+        await logSecurityEvent({
+          actorId: user.id,
+          actorEmail: user.email,
+          actorName: user.name,
+          action: 'PASSWORD_RESET_DISPATCH_FAILED',
+          targetId: user.id,
+          details: `Password reset email delivery failed: ${emailResult.error}`,
+          ipAddress: req.ip,
+        });
+
+        // Safe DEVELOPMENT-ONLY demonstration mode for school presentations & testing
+        // Strictly refused and deactivated in production environments
+        const isDevFallbackEnabled =
+          process.env.NODE_ENV !== 'production' &&
+          process.env.ENABLE_DEV_RESET_FALLBACK === 'true';
+
+        if (isDevFallbackEnabled) {
+          console.log('\n========================================================================');
+          console.log('   [STUDYFLOW DEV MODE] PASSWORD RESET CODE GENERATED FOR DEMO          ');
+          console.log('========================================================================');
+          console.log(`Account Email: ${user.email}`);
+          console.log(`6-Digit Code:  ${numericCode}`);
+          console.log(`Expires:       in 10 minutes`);
+          console.log(`Database:      Persisted as HMAC-SHA256 in PostgreSQL`);
+          console.log(`Resend Notice: Real delivery was restricted (${emailResult.error})`);
+          console.log('========================================================================\n');
+
+          return res.json({
+            success: true,
+            message: 'If an account exists with this university email, a 6-digit verification code has been sent.',
+            devMode: true,
+            devNotice: 'Development Demonstration Mode: verification code printed to server terminal.',
+            devCode: numericCode,
+          });
+        }
+
+        // Production / Standard Mode: Log concise diagnostic without leaking secrets or codes
+        console.warn(
+          `[ForgotPassword] Email delivery restricted by provider (status ${emailResult.statusCode || 403}): ${emailResult.error}`
+        );
+
+        // User-friendly error that preserves anti-enumeration and protects private Resend sandbox details
+        throw ApiError.serviceUnavailable(
+          'Email delivery service is temporarily unavailable. Please try again later or contact university support.'
         );
       }
 
-      // Record audit event
+      // Record audit event for successful verification code dispatch
       await logSecurityEvent({
         actorId: user.id,
         actorEmail: user.email,
         actorName: user.name,
         action: 'PASSWORD_RESET_REQUESTED',
         targetId: user.id,
-        details: `Password reset verification code requested for ${user.email}`,
+        details: `Password reset verification code dispatched to ${user.email} (Provider messageId: ${emailResult.messageId || 'simulated'})`,
         ipAddress: req.ip,
       });
 

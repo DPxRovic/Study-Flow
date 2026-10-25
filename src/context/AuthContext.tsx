@@ -31,7 +31,13 @@ interface AuthContextType {
   register: (data: RegisterData) => Promise<LoginResult>;
   logout: () => Promise<void>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; emailExists: boolean }>;
-  forgotPassword: (email: string) => Promise<{ success: boolean; message: string }>;
+  forgotPassword: (email: string) => Promise<{
+    success: boolean;
+    message: string;
+    devMode?: boolean;
+    devNotice?: string;
+    devCode?: string;
+  }>;
   verifyResetCode: (email: string, code: string) => Promise<{ success: boolean; message: string; resetToken?: string }>;
   resetPassword: (email: string, resetToken: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   switchRole: (role: UserRole) => Promise<void>;
@@ -160,7 +166,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const forgotPassword = async (email: string): Promise<{ success: boolean; message: string }> => {
+  const forgotPassword = async (email: string) => {
     return authService.forgotPassword(email.trim());
   };
 

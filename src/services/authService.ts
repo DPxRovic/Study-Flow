@@ -75,8 +75,20 @@ export const authService = {
     }
   },
 
-  async forgotPassword(email: string): Promise<{ success: boolean; message: string }> {
-    return apiClient.post<{ success: boolean; message: string }>('/auth/forgot-password', { email });
+  async forgotPassword(email: string): Promise<{
+    success: boolean;
+    message: string;
+    devMode?: boolean;
+    devNotice?: string;
+    devCode?: string;
+  }> {
+    return apiClient.post<{
+      success: boolean;
+      message: string;
+      devMode?: boolean;
+      devNotice?: string;
+      devCode?: string;
+    }>('/auth/forgot-password', { email });
   },
 
   async verifyResetCode(

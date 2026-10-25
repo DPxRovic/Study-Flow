@@ -12,6 +12,7 @@ export interface ServerConfig {
   appName: string;
   resendApiKey: string;
   resendFromEmail: string;
+  enableDevResetFallback: boolean;
 }
 
 const nodeEnv = process.env.NODE_ENV || 'development';
@@ -45,4 +46,5 @@ export const config: ServerConfig = {
   appName: 'StudyFlow Academic Planner',
   resendApiKey: process.env.RESEND_API_KEY || '',
   resendFromEmail: process.env.RESEND_FROM_EMAIL || 'StudyFlow <onboarding@resend.dev>',
+  enableDevResetFallback: !isProd && process.env.ENABLE_DEV_RESET_FALLBACK === 'true',
 };
