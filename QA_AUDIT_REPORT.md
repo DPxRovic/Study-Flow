@@ -4,15 +4,15 @@
 **Repository:** `Study-Flow`  
 **Runtime checked:** Bun 1.4.3, Node.js 24.18.0  
 **Audit mode:** Static analysis, logical data-flow analysis, and safe runtime checks  
-**Status:** 60 verified findings; no fixes applied
+**Status:** 64 documented findings (60 original + 4 follow-up); remediation and full regression testing await the user's go signal
 
 ## Scope
 
-This report covers frontend behavior, backend/API behavior, configuration, authentication, authorization, scheduling logic, and frontend-to-backend contracts.
+This report covers frontend behavior, backend/API behavior, configuration, authentication, authorization, scheduling logic, frontend-to-backend contracts, and the follow-up environment incident observed on 2026-10-26.
 
 The following areas were intentionally excluded:
 
-- Database schemas and migrations
+- Database schema design and query-quality review (the follow-up records migration readiness only)
 - ORM model design and query quality
 - SQL, database indexes, and database configuration
 - Cosmetic style preferences that do not cause functional or serious maintainability problems
@@ -21,13 +21,13 @@ The following areas were intentionally excluded:
 
 ## Executive Summary
 
-| Severity  | Frontend | Backend | Integration |  Total |
-| --------- | -------: | ------: | ----------: | -----: |
-| Critical  |        0 |       0 |           1 |      1 |
-| High      |       11 |       6 |           6 |     23 |
-| Medium    |       11 |      17 |           3 |     31 |
-| Low       |        2 |       3 |           0 |      5 |
-| **Total** |   **24** |  **26** |      **10** | **60** |
+| Severity  | Frontend | Backend | Integration | Operations | Total |
+| --------- | -------: | ------: | ----------: | ---------: | ----: |
+| Critical  |        0 |       0 |           1 |          1 |     2 |
+| High      |       11 |       6 |           6 |          0 |    23 |
+| Medium    |       12 |      18 |           4 |          0 |    34 |
+| Low       |        2 |       3 |           0 |          0 |     5 |
+| **Total** |   **25** |  **27** |      **11** |      **1** | **64** |
 
 ### Highest-risk areas
 
@@ -35,6 +35,7 @@ The following areas were intentionally excluded:
 2. Schedule generation and completion accounting can violate availability constraints or corrupt remaining workload.
 3. Much of the student workspace is local-only, while several administrative screens report success for changes that were never saved.
 4. Role-based permissions for curriculum management, faculty loads, and assignment lifecycles are not properly segregated among Admins, Professors, and Students.
+5. Live infrastructure credentials were disclosed outside the local secret store and must be rotated before any release or further connectivity testing.
 
 ## Codebase Reconnaissance
 
@@ -594,12 +595,66 @@ The following areas were intentionally excluded:
 - **Reproduction:** Log in as a Student or Professor, navigate to Subjects, and observe the ability to create custom subjects, edit credit units, or use "Enroll Subject" as a faculty member.
 - **Impact:** Unauthorized curriculum modifications, inaccurate faculty load terminology, and uncoordinated subject schedules across roles.
 
+## Follow-up Configuration and Login Findings (2026-10-26)
+
+These findings were added after reproducing the user-facing message `Database service is temporarily unavailable`. No application-code remediation was authorized during this follow-up. Sensitive values are intentionally omitted.
+
+### FE-25 — Login error collapses configuration and schema failures into a generic outage
+
+- **Severity:** Medium
+- **Category:** Error Handling / Operability
+- **Location:** `src/pages/public/LoginPage.tsx`; `src/server/middleware/errorHandler.ts`; `src/server/db/prisma.ts`
+- **Problem:** The login page presents the same temporary-database-outage message for a missing `DATABASE_URL`, an old server process that has not reloaded `.env`, an unreachable provider, and an unapplied database migration.
+- **Reproduction:** Start the development server with an empty `.env`, attempt login, then save a valid `.env` without restarting the server and attempt login again.
+- **Impact:** Operators repeatedly retry credentials even though the failure is unrelated to the email or password, and the UI provides no correlation or development-only diagnostic path.
+
+### BE-27 — Development startup succeeds without its required database dependency
+
+- **Severity:** Medium
+- **Category:** Configuration / Availability
+- **Location:** `src/server/config/index.ts`; `src/server/db/prisma.ts`; `server.ts`
+- **Problem:** In development, a missing `DATABASE_URL` emits a warning but still starts the unified application. The frontend loads normally, while authentication and all persisted workflows fail later at request time.
+- **Reproduction:** Leave `.env` empty and run `bun run dev`; load the login page and submit valid-looking credentials.
+- **Impact:** The application appears healthy even though its core dependency is unavailable, producing a misleading partially running state and avoidable user-facing 503 responses.
+
+### INT-11 — Environment, migration, restart, and seed readiness are not verified as one workflow
+
+- **Severity:** Medium
+- **Category:** Integration / Deployment Readiness
+- **Location:** `.env.example`; `README.md`; `package.json`; `server.ts`; `prisma/migrations/`; `prisma/seed.ts`
+- **Problem:** Setup is split across manual steps without a single readiness check. Saving `.env` does not update an already running process, pending migrations are not detected before the login UI becomes available, and the known seed password applies only to explicitly seeded accounts—not to an arbitrary email entered on the login form.
+- **Observed evidence:** The saved `.env` was initially zero bytes. After a valid URL was saved, Prisma reached the configured PostgreSQL service, reported one pending migration, and the migration was deployed. The browser still required a full server restart and a verified account before login could be meaningfully retested.
+- **Reproduction:** Start with an empty `.env`, open the app, save valid environment values, deploy a pending migration, but leave the original server process running and try an email that was never seeded or registered.
+- **Impact:** A valid database can still appear unavailable, while seed credentials are mistakenly tested against unrelated accounts.
+
+### OPS-01 — Live infrastructure credentials were disclosed outside the secret store
+
+- **Severity:** Critical
+- **Category:** Secret Management / Incident Response
+- **Location:** External conversation history and the local git-ignored `.env`; affected providers include PostgreSQL, object storage, email delivery, and JWT signing.
+- **Problem:** Live-looking connection and API credentials were copied into a conversational channel. Git ignore rules prevent repository commits but do not make already disclosed credentials safe.
+- **Required response:** Revoke and rotate the database role password, object-storage access key pair, email-provider API key, and JWT signing secret. Do not reuse the disclosed values. Invalidate active JWTs after rotating the signing secret.
+- **Release gate:** Old credentials must be proven rejected, new credentials must exist only in approved secret stores/local ignored files, and repository/history secret scanning must pass before deployment.
+- **Impact:** Unauthorized database, storage, or email access and forged authentication tokens are possible until rotation is complete.
+
+### Sanitized follow-up evidence
+
+- The local `.env` is git-ignored.
+- The local `.env` now contains the required variable names; values were not recorded in this report.
+- Prisma successfully contacted the configured PostgreSQL database.
+- Migration `20261025_add_password_reset` was pending and was successfully deployed during diagnosis.
+- The currently displayed login failure has not yet been revalidated after a confirmed server restart.
+- The existence, role, and password state of the email used in the latest screenshot have not yet been verified.
+
 ## QA Validation Plan
 
 The following checklist should be executed after fixes begin. Each item maps back to one or more findings above.
 
 ### P0 — Security and identity
 
+- [ ] Rotate every credential covered by `OPS-01` and verify each disclosed credential is rejected.
+- [ ] Rotate the JWT secret and verify tokens signed with the disclosed secret no longer authenticate.
+- [ ] Run a secret scan across tracked files and repository history without printing secret values (`OPS-01`).
 - [ ] Verify that UI login creates and uses the authenticated user's backend token (`INT-01`).
 - [ ] Confirm that no administrator credentials exist in the client bundle (`INT-01`).
 - [ ] Attempt to edit browser storage and verify that it cannot grant protected access (`FE-01`).
@@ -611,6 +666,15 @@ The following checklist should be executed after fixes begin. Each item maps bac
 - [ ] Confirm role demotion cannot leave the deployment without an administrator (`BE-04`).
 - [ ] Force audit recording to fail and verify privileged changes do not silently succeed (`BE-20`).
 - [ ] Verify the "Admin Quick Demo Access" and "Switch to Admin Console" buttons authenticate and route to the Admin Console properly (`FE-21`).
+
+### P0 — Environment and database readiness
+
+- [ ] Start with no `DATABASE_URL` and verify the server fails fast with an operator-facing message before serving the login UI (`BE-27`).
+- [ ] Start with an unreachable database and verify readiness is reported as unhealthy without exposing connection details (`BE-27`).
+- [ ] Save or rotate `.env`, fully restart `bun run dev`, and confirm the new process loaded the updated variables (`INT-11`).
+- [ ] Run `prisma migrate status` and require zero pending migrations before authentication smoke tests (`INT-11`).
+- [ ] Verify the intended account exists, has the intended role, and is tested with its own password—not the seed password of a different account (`INT-11`).
+- [ ] Confirm configuration/schema failures are distinguishable in server logs while the browser retains a safe, actionable message (`FE-25`).
 
 ### P0 — Cross-account isolation and persistence
 
