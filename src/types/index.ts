@@ -188,7 +188,20 @@ export interface CatalogCourse {
   description?: string;
   syllabusOverview?: string;
   activeEnrolledCount?: number;
+  enrolledStudents?: EnrolledStudent[];
+  facultyLoadCount?: number;
   colorKey?: SubjectCategory;
+}
+
+export interface EnrolledStudent {
+  id: string;
+  enrollmentId: string;
+  name: string;
+  email: string;
+  major?: string;
+  term?: string;
+  status: 'Active' | 'Review' | 'Suspended';
+  enrolledAt: string;
 }
 
 export interface DirectoryUser {

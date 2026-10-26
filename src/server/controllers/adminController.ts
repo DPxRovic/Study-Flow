@@ -581,21 +581,62 @@ export class AdminController {
   static async getCatalog(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
       const courses = await prisma.catalogCourse.findMany({
-        include: { _count: { select: { enrollments: true } } },
+        include: {
+          enrollments: {
+            select: {
+              id: true,
+              createdAt: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  role: true,
+                  major: true,
+                  term: true,
+                  accountStatus: true,
+                },
+              },
+            },
+            orderBy: { createdAt: 'asc' },
+          },
+        },
         orderBy: { code: 'asc' },
       });
-      const masterCatalog = courses.map(({ _count, ...course }: any) => ({
-        ...course,
-        name: course.title,
-        activeEnrolledCount: _count.enrollments,
-      }));
+      const masterCatalog = courses.map(({ enrollments, ...course }: any) => {
+        const studentEnrollments = enrollments.filter((enrollment: any) => enrollment.user.role === 'STUDENT');
+
+        return {
+          ...course,
+          name: course.title,
+          activeEnrolledCount: studentEnrollments.length,
+          facultyLoadCount: enrollments.length - studentEnrollments.length,
+          enrolledStudents: studentEnrollments.map((enrollment: any) => ({
+            id: enrollment.user.id,
+            enrollmentId: enrollment.id,
+            name: enrollment.user.name,
+            email: enrollment.user.email,
+            major: enrollment.user.major,
+            term: enrollment.user.term,
+            status: enrollment.user.accountStatus === 'SUSPENDED'
+              ? 'Suspended'
+              : enrollment.user.accountStatus === 'REVIEW'
+                ? 'Review'
+                : 'Active',
+            enrolledAt: enrollment.createdAt,
+          })),
+        };
+      });
 
       res.json({
         success: true,
         data: masterCatalog,
         meta: {
           totalCatalogCourses: masterCatalog.length,
-          totalStudentEnrollments: courses.reduce((sum: number, course: any) => sum + course._count.enrollments, 0),
+          totalStudentEnrollments: masterCatalog.reduce(
+            (sum: number, course: any) => sum + course.activeEnrolledCount,
+            0
+          ),
         },
       });
     } catch (err) {

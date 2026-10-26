@@ -63,6 +63,7 @@ export function CurriculumPage() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<CatalogCourse | null>(null);
+  const [rosterCourse, setRosterCourse] = useState<CatalogCourse | null>(null);
 
   // Form State
   const [code, setCode] = useState('');
@@ -384,8 +385,23 @@ export function CurriculumPage() {
                     </td>
 
                     {/* Active Enrolled */}
-                    <td className="py-3.5 px-4 text-center font-mono tabular-nums text-slate-600 font-bold">
-                      {c.activeEnrolledCount ? `${c.activeEnrolledCount} students` : '—'}
+                    <td className="py-3.5 px-4 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setRosterCourse(c)}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 font-mono font-bold tabular-nums text-sky-700 hover:bg-sky-50 hover:text-sky-900 focus:outline-none focus:ring-2 focus:ring-sky-500/30 transition-colors cursor-pointer"
+                        title={`View students enrolled in ${c.code}`}
+                        aria-label={`View ${c.activeEnrolledCount || 0} students enrolled in ${c.code}`}
+                      >
+                        <Users className="h-3.5 w-3.5" />
+                        {c.activeEnrolledCount || 0}{' '}
+                        {(c.activeEnrolledCount || 0) === 1 ? 'student' : 'students'}
+                      </button>
+                      {!!c.facultyLoadCount && (
+                        <div className="mt-0.5 text-[10px] font-medium text-slate-400">
+                          {c.facultyLoadCount} faculty load
+                        </div>
+                      )}
                     </td>
 
                     {/* Actions */}
@@ -520,6 +536,70 @@ export function CurriculumPage() {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Student enrollment roster */}
+      <Modal
+        isOpen={!!rosterCourse}
+        onClose={() => setRosterCourse(null)}
+        title={rosterCourse ? `${rosterCourse.code} Enrolled Students` : 'Enrolled Students'}
+        description={rosterCourse?.title}
+        icon={<Users className="h-4 w-4" />}
+        maxWidth="xl"
+      >
+        {rosterCourse && (rosterCourse.enrolledStudents?.length || 0) > 0 ? (
+          <div className="overflow-hidden rounded-xl border border-slate-200">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2.5">Student</th>
+                    <th className="px-3 py-2.5">Major</th>
+                    <th className="px-3 py-2.5">Term</th>
+                    <th className="px-3 py-2.5 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rosterCourse.enrolledStudents?.map((student) => (
+                    <tr key={student.enrollmentId} className="hover:bg-slate-50/70">
+                      <td className="px-3 py-3">
+                        <div className="font-bold text-slate-900">{student.name}</div>
+                        <div className="mt-0.5 text-[11px] text-slate-500">{student.email}</div>
+                      </td>
+                      <td className="px-3 py-3 font-medium text-slate-700">
+                        {student.major || 'Not specified'}
+                      </td>
+                      <td className="px-3 py-3 font-medium text-slate-700">
+                        {student.term || 'Not specified'}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            student.status === 'Active'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : student.status === 'Review'
+                                ? 'bg-amber-50 text-amber-700'
+                                : 'bg-rose-50 text-rose-700'
+                          }`}
+                        >
+                          {student.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-6 py-10 text-center">
+            <Users className="mb-3 h-8 w-8 text-slate-300" />
+            <p className="font-bold text-slate-700">No students are enrolled yet</p>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Students will appear here after they add this course to their schedule.
+            </p>
+          </div>
+        )}
       </Modal>
     </div>
   );

@@ -388,6 +388,14 @@ async function runIntegrationSuite() {
     assert(professorCompletionRejected, 'Professor cannot invoke the student-only assignment completion action');
 
     await authService.login('e.vance@university.edu', 'studyflow2026');
+    const catalogView = await adminService.getCatalog();
+    const catalogCourseView = catalogView.data.find((course) => course.id === createdCatalogCourseId);
+    assert(catalogCourseView?.activeEnrolledCount === 1, 'Admin catalog counts only students in the enrolled cohort');
+    assert(
+      catalogCourseView?.enrolledStudents?.some((student) => student.email === testStudentEmail) === true,
+      'Admin can view the identity and academic details of an enrolled student'
+    );
+    assert(catalogCourseView?.facultyLoadCount === 1, 'Admin catalog reports faculty loads separately from student enrollments');
     await adminService.updateUser(createdProfessorId, { status: 'Suspended' });
     apiClient.setToken(professorToken);
     let suspendedProfessorRejected = false;
