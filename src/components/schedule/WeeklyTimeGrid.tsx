@@ -55,7 +55,8 @@ export function WeeklyTimeGrid({
     const gridStartMins = START_HOUR * 60;
 
     const top = Math.max(0, ((startMins - gridStartMins) / 60) * HOUR_HEIGHT);
-    const height = Math.max(28, ((endMins - startMins) / 60) * HOUR_HEIGHT);
+    // Preserve the true time scale so adjacent short events never visually overlap.
+    const height = Math.max(12, ((endMins - startMins) / 60) * HOUR_HEIGHT);
 
     return { top, height };
   };

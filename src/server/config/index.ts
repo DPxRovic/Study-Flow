@@ -4,6 +4,9 @@
  */
 
 import crypto from 'node:crypto';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 export interface ServerConfig {
   port: number;
@@ -25,12 +28,8 @@ const isProd = nodeEnv === 'production';
 
 // Strict validation of required security & database variables
 const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  if (isProd) {
-    throw new Error('[FATAL] Missing required DATABASE_URL environment variable in production mode.');
-  } else {
-    console.warn('[WARN] DATABASE_URL is not set. Database operations requiring PostgreSQL will fail.');
-  }
+if (!databaseUrl || databaseUrl.trim() === '') {
+  throw new Error('[FATAL] Missing required DATABASE_URL environment variable. StudyFlow requires PostgreSQL.');
 }
 
 let jwtSecret = process.env.JWT_SECRET;
@@ -59,7 +58,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 export const config: ServerConfig = {
   port,
   host: process.env.HOST || (isProd ? '0.0.0.0' : '127.0.0.1'),
-  databaseUrl: databaseUrl || '',
+  databaseUrl,
   jwtSecret,
   jwtExpiresIn: '7d',
   env: nodeEnv,

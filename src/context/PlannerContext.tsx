@@ -18,10 +18,7 @@ import {
 } from '../types';
 import { useToast } from './ToastContext';
 import { useAuth } from './AuthContext';
-import {
-  detectScheduleConflicts,
-  generateMockSchedule,
-} from '../utils/scheduleGenerator';
+import { detectScheduleConflicts } from '../utils/scheduleGenerator';
 import { subjectService } from '../services/subjectService';
 import { taskService } from '../services/taskService';
 import { availabilityService } from '../services/availabilityService';
@@ -50,9 +47,10 @@ interface PlannerContextType {
   updateTask: (id: string, updates: Partial<Task>) => Promise<Task | null>;
   deleteTask: (id: string) => Promise<boolean>;
   toggleTaskCompleted: (id: string) => Promise<void>;
+  reopenTaskAcceptance: (id: string, until: string) => Promise<void>;
 
   // Subject actions
-  addSubject: (subject: Omit<Subject, 'id'>) => Promise<Subject | null>;
+  addSubject: (subject: { catalogCourseId: string; classroom?: string; classSchedule?: string; officeHours?: string }) => Promise<Subject | null>;
   updateSubject: (id: string, updates: Partial<Subject>) => Promise<Subject | null>;
   deleteSubject: (id: string) => Promise<boolean>;
 
@@ -71,7 +69,7 @@ interface PlannerContextType {
   updateAvailabilitySlots: (slots: AvailabilitySlot[]) => Promise<void>;
 
   // Schedule generator
-  generateSchedule: (options: Partial<ScheduleGenerationOptions>) => { generatedCount: number; warnings: string[] };
+  generateSchedule: (options: Partial<ScheduleGenerationOptions>) => Promise<{ generatedCount: number; warnings: string[] }>;
 
   // Admin actions
   addAnnouncement: (announcement: Omit<Announcement, 'id' | 'publishedAt'>) => Promise<boolean>;
@@ -297,7 +295,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
   // ==========================================
   // Subject Actions (Connected to Backend API)
   // ==========================================
-  const addSubject = async (subjectData: Omit<Subject, 'id'>): Promise<Subject | null> => {
+  const addSubject = async (subjectData: { catalogCourseId: string; classroom?: string; classSchedule?: string; officeHours?: string }): Promise<Subject | null> => {
     try {
       const created = await subjectService.create(subjectData);
       setSubjects((prev) => [...prev, created]);
@@ -478,49 +476,52 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
   // ==========================================
   // Schedule Generator
   // ==========================================
-  const generateSchedule = (options: Partial<ScheduleGenerationOptions>) => {
-    const result = generateMockSchedule(sessions, tasks, availability, options);
+  const generateSchedule = async (options: Partial<ScheduleGenerationOptions>) => {
+    try {
+      const result = await scheduleService.generateSchedule({
+        startDate: options.startDate,
+        endDate: options.endDate,
+        mode: options.mode ? String(options.mode).toUpperCase() : 'BALANCED',
+        targetDailyStudyCapHours: options.dailyStudyCapHours ?? options.maxDailyHours,
+        defaultSessionMinutes: options.sessionLengthMinutes,
+        preferredBreakMinutes: options.breakMinutes,
+        bufferMinutes: options.bufferMinutes,
+        preferredStudyTime: options.preferredStudyTime,
+      });
 
-    // Update in-memory session list immediately for fluid UX
-    setSessions(result.newSessions);
+      setSessions(result.sessions || []);
 
-    // Persist and regenerate on backend when authenticated
-    if (isAuthenticated) {
-      scheduleService
-        .generateSchedule({
-          mode: options.mode ? String(options.mode).toUpperCase() : 'BALANCED',
-        })
-        .then((res) => {
-          if (res.sessions && res.sessions.length > 0) {
-            setSessions(res.sessions);
-          }
-        })
-        .catch((err) => {
-          console.error('Failed to persist schedule to backend:', err);
-          showToast(err.message || 'Failed to save generated schedule to database', 'error');
-        });
+      addNotification({
+        category: 'schedule',
+        priority: 'important',
+        title: `Schedule Generated: ${result.generatedCount} Study Blocks`,
+        description: `Constraint-based allocation generated across available windows. ${
+          result.warnings.length > 0 ? result.warnings[0] : 'All fatigue limits maintained.'
+        }`,
+        actionUrl: '/schedule',
+        actionLabel: 'View Schedule',
+      });
+
+      showToast(
+        `Schedule updated: ${result.generatedCount} sessions allocated (locked blocks preserved)`,
+        'success'
+      );
+
+      return { generatedCount: result.generatedCount, warnings: result.warnings };
+    } catch (err: any) {
+      showToast(err.message || 'Failed to generate and save schedule', 'error');
+      throw err;
     }
+  };
 
-    addNotification({
-      category: 'schedule',
-      priority: 'important',
-      title: `Schedule Generated: ${result.generatedCount} Study Blocks`,
-      description: `Optimal balanced allocation generated across available windows. ${
-        result.warnings.length > 0 ? result.warnings[0] : 'All fatigue limits maintained.'
-      }`,
-      actionUrl: '/schedule',
-      actionLabel: 'View Schedule',
-    });
-
-    showToast(
-      `Schedule updated: ${result.generatedCount} sessions allocated (locked blocks preserved)`,
-      'success'
-    );
-
-    return {
-      generatedCount: result.generatedCount,
-      warnings: result.warnings,
-    };
+  const reopenTaskAcceptance = async (id: string, until: string) => {
+    try {
+      const updated = await taskService.reopenAcceptance(id, until);
+      setTasks((prev) => prev.map((task) => (task.id === id ? updated : task)));
+      showToast('Assignment acceptance reopened', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to reopen assignment acceptance', 'error');
+    }
   };
 
   // ==========================================
@@ -582,13 +583,12 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
   const addNotification = async (
     notifData: Omit<AcademicNotification, 'id' | 'timestamp' | 'read'>
   ) => {
-    const newNotif: AcademicNotification = {
-      ...notifData,
-      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      timestamp: new Date().toISOString(),
-      read: false,
-    };
-    setNotifications((prev) => [newNotif, ...prev]);
+    try {
+      const created = await notificationService.create(notifData);
+      setNotifications((prev) => [created, ...prev]);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to save notification', 'error');
+    }
   };
 
   const markNotificationRead = async (id: string) => {
@@ -597,18 +597,18 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, read: true } : n))
       );
-    } catch {
-      // Local optimistic update fallback
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-      );
+    } catch (err: any) {
+      showToast(err.message || 'Failed to mark notification read', 'error');
     }
   };
 
   const markNotificationUnread = async (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: false } : n))
-    );
+    try {
+      await notificationService.markUnread(id);
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: false } : n)));
+    } catch (err: any) {
+      showToast(err.message || 'Failed to mark notification unread', 'error');
+    }
   };
 
   const markAllNotificationsRead = async () => {
@@ -632,8 +632,13 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
   };
 
   const clearAllNotifications = async () => {
-    setNotifications([]);
-    showToast('All notifications cleared', 'info');
+    try {
+      await notificationService.deleteAll();
+      setNotifications([]);
+      showToast('All notifications cleared', 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to clear notifications', 'error');
+    }
   };
 
   // ==========================================
@@ -675,6 +680,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         updateTask,
         deleteTask,
         toggleTaskCompleted,
+        reopenTaskAcceptance,
         addSubject,
         updateSubject,
         deleteSubject,

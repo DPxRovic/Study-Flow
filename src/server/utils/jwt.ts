@@ -10,8 +10,9 @@ import { config } from '../config';
 export interface TokenPayload {
   userId: string;
   email: string;
-  role: 'student' | 'admin' | 'advisor' | 'ta';
+  role: 'student' | 'admin' | 'professor' | 'advisor' | 'ta';
   name: string;
+  tokenVersion: number;
 }
 
 export async function hashPassword(plainText: string): Promise<string> {
@@ -23,8 +24,10 @@ export async function comparePassword(plainText: string, hash: string): Promise<
   return bcrypt.compare(plainText, hash);
 }
 
-export function generateToken(payload: TokenPayload): string {
-  return jwt.sign(payload, config.jwtSecret, {
+export function generateToken(
+  payload: Omit<TokenPayload, 'tokenVersion'> & { tokenVersion?: number }
+): string {
+  return jwt.sign({ ...payload, tokenVersion: payload.tokenVersion ?? 0 }, config.jwtSecret, {
     expiresIn: config.jwtExpiresIn,
   } as jwt.SignOptions);
 }

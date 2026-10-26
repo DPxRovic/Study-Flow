@@ -63,7 +63,9 @@ async function runIntegrationSuite() {
   const testStudentEmail = `integration.student.${timestamp}@university.edu`;
   const testStudentPassword = 'SecureStudent2026!';
   let createdStudentId = '';
+  let createdProfessorId = '';
   let createdSubjectId = '';
+  let createdCatalogCourseId = '';
   let createdTaskId = '';
   let createdSlotId = '';
   let createdSessionId = '';
@@ -124,14 +126,21 @@ async function runIntegrationSuite() {
     console.log('\n--- 2. SUBJECTS & COURSE CATALOG FLOWS ---');
 
     const courseCode = `CS${Math.floor(100 + Math.random() * 899)}`;
+    const catalogCourse = await prisma.catalogCourse.create({
+      data: {
+        code: courseCode,
+        title: 'Distributed Systems & Cloud',
+        department: 'Computer Science',
+        colorKey: 'cs',
+        credits: 4,
+        instructor: 'Dr. Turing',
+        expectedWeeklyHours: 8.0,
+      },
+    });
+    createdCatalogCourseId = catalogCourse.id;
     const newSubject = await subjectService.create({
-      code: courseCode,
-      name: 'Distributed Systems & Cloud',
-      colorKey: 'cs',
-      credits: 4,
-      instructor: 'Dr. Turing',
+      catalogCourseId: catalogCourse.id,
       weeklyTargetHours: 8.0,
-      classroom: 'Gates Hall 301',
     });
 
     assert(!!newSubject.id, 'Creates new course subject in PostgreSQL');
@@ -146,10 +155,16 @@ async function runIntegrationSuite() {
     // Update subject
     const updatedSubject = await subjectService.update(createdSubjectId, {
       weeklyTargetHours: 9.5,
-      classroom: 'Turing Auditorium',
     });
     assert(updatedSubject.weeklyTargetHours === 9.5, 'Updates course target hours successfully');
-    assert(updatedSubject.classroom === 'Turing Auditorium', 'Updates course classroom location');
+
+    let studentCreditUpdateRejected = false;
+    try {
+      await subjectService.update(createdSubjectId, { credits: 12 });
+    } catch (err: any) {
+      studentCreditUpdateRejected = err instanceof ApiClientError && err.status === 403;
+    }
+    assert(studentCreditUpdateRejected, 'Student cannot modify administrator-controlled course credits');
 
     // =========================================================================
     // SECTION 3: TASKS & DELIVERABLES FLOWS
@@ -337,6 +352,54 @@ async function runIntegrationSuite() {
     await adminService.deleteAnnouncement(createdAnnouncementId);
     assert(true, 'Admin deletes announcement with audit logging');
 
+    const professorEmail = `integration.professor.${timestamp}@university.edu`;
+    const professorPassword = 'SecureProfessor2026!';
+    const professorProvision = await adminService.provisionUser({
+      name: 'Integration Test Professor',
+      email: professorEmail,
+      password: professorPassword,
+      role: 'professor',
+      major: 'Computer Science',
+    });
+    createdProfessorId = professorProvision.data.id;
+    const professorLogin = await authService.login(professorEmail, professorPassword);
+    const professorToken = professorLogin.token!;
+    assert(professorLogin.user.role === 'professor', 'Administrator can provision a Professor account');
+    const facultySubject = await subjectService.create({
+      catalogCourseId: createdCatalogCourseId,
+      classroom: 'Faculty Hall 201',
+      classSchedule: 'Tue/Thu 10:00-11:30',
+    });
+    assert(facultySubject.catalogCourseId === createdCatalogCourseId, 'Professor adds an administrator-created course to faculty load');
+    const professorTask = await taskService.create({
+      subjectId: facultySubject.id,
+      title: 'Professor-managed assignment',
+      type: 'assignment',
+      priority: 'medium',
+      dueDate: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+      estimatedHours: 1,
+    });
+    let professorCompletionRejected = false;
+    try {
+      await taskService.toggleComplete(professorTask.id);
+    } catch (err: any) {
+      professorCompletionRejected = err instanceof ApiClientError && err.status === 403;
+    }
+    assert(professorCompletionRejected, 'Professor cannot invoke the student-only assignment completion action');
+
+    await authService.login('e.vance@university.edu', 'studyflow2026');
+    await adminService.updateUser(createdProfessorId, { status: 'Suspended' });
+    apiClient.setToken(professorToken);
+    let suspendedProfessorRejected = false;
+    try {
+      await authService.getCurrentUser();
+    } catch (err: any) {
+      suspendedProfessorRejected = err instanceof ApiClientError && [401, 403].includes(err.status);
+    }
+    const suspendedRecord = await prisma.user.findUnique({ where: { id: createdProfessorId } });
+    assert(suspendedProfessorRejected, 'Suspending an account immediately invalidates its active session');
+    assert(suspendedRecord?.term === 'Fall 2026', 'Account suspension does not overwrite the academic term');
+
     // =========================================================================
     // SECTION 8: NEGATIVE SCENARIOS & SESSION INVALIDATION
     // =========================================================================
@@ -391,6 +454,18 @@ async function runIntegrationSuite() {
     }
     assert(validationRejected, 'Validation failure returns 400 Bad Request without silent failure');
 
+    // 8.5 Server-side logout revokes the bearer token, not just browser state
+    apiClient.setToken(studentToken);
+    await authService.logout();
+    apiClient.setToken(studentToken);
+    let revokedTokenRejected = false;
+    try {
+      await authService.getCurrentUser();
+    } catch (err: any) {
+      revokedTokenRejected = err instanceof ApiClientError && err.status === 401;
+    }
+    assert(revokedTokenRejected, 'Logged-out bearer token is rejected by the server');
+
   } finally {
     // Clean up created student and cascading records
     if (createdStudentId) {
@@ -399,6 +474,12 @@ async function runIntegrationSuite() {
       } catch {
         // Ignore cleanup error
       }
+    }
+    if (createdProfessorId) {
+      await prisma.user.delete({ where: { id: createdProfessorId } }).catch(() => null);
+    }
+    if (createdCatalogCourseId) {
+      await prisma.catalogCourse.delete({ where: { id: createdCatalogCourseId } }).catch(() => null);
     }
 
     server.close();

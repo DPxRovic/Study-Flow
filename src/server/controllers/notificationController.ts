@@ -7,9 +7,34 @@ import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { prisma } from '../db/prisma';
 import { ApiError } from '../utils/ApiError';
-import { validateId, validateNotificationCategory } from '../utils/validators';
+import { validateId, validateNotificationCategory, validateString } from '../utils/validators';
 
 export class NotificationController {
+  static async create(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const { category, title, description, actionUrl, actionLabel, relatedId, priority } = req.body;
+      const validPriority = priority === undefined ? 'normal' : String(priority).toLowerCase();
+      if (!['normal', 'important', 'urgent'].includes(validPriority)) {
+        throw ApiError.badRequest('Notification priority must be normal, important, or urgent');
+      }
+      const created = await prisma.academicNotification.create({
+        data: {
+          userId: req.user!.userId,
+          category: validateNotificationCategory(category),
+          title: validateString(title, 'Notification title', 2, 150),
+          description: validateString(description, 'Notification description', 2, 1000),
+          actionUrl: actionUrl ? validateString(actionUrl, 'Action URL', 1, 300) : null,
+          actionLabel: actionLabel ? validateString(actionLabel, 'Action label', 1, 80) : null,
+          relatedId: relatedId ? validateString(relatedId, 'Related ID', 1, 100) : null,
+          priority: validPriority,
+        },
+      });
+      res.status(201).json({ success: true, data: created });
+    } catch (err) {
+      next(err);
+    }
+  }
+
   // GET /api/notifications (With category filter, read status filter, and pagination)
   static async list(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
@@ -89,6 +114,24 @@ export class NotificationController {
     }
   }
 
+  static async markUnread(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const notifId = validateId(req.params.id, 'Notification ID');
+      const notif = await prisma.academicNotification.findUnique({ where: { id: notifId } });
+      if (!notif) throw ApiError.notFound('Notification not found');
+      if (notif.userId !== req.user!.userId && req.user!.role !== 'admin') {
+        throw ApiError.forbidden('You do not own this notification');
+      }
+      const updated = await prisma.academicNotification.update({
+        where: { id: notifId },
+        data: { read: false },
+      });
+      res.json({ success: true, data: updated });
+    } catch (err) {
+      next(err);
+    }
+  }
+
   // POST /api/notifications/read-all (Mark all notifications as read for current student)
   static async markAllRead(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
@@ -140,6 +183,17 @@ export class NotificationController {
         success: true,
         message: 'Notification removed',
       });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async deleteAll(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const result = await prisma.academicNotification.deleteMany({
+        where: { userId: req.user!.userId },
+      });
+      res.json({ success: true, message: `${result.count} notifications removed` });
     } catch (err) {
       next(err);
     }

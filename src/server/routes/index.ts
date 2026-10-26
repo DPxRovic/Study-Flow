@@ -49,6 +49,7 @@ router.post('/auth/logout', authenticate, AuthController.logout);
 // 2. Student Course Subjects (Protected)
 // ==========================================
 router.get('/subjects', authenticate, SubjectController.list);
+router.get('/catalog', authenticate, SubjectController.catalog);
 router.get('/subjects/:id', authenticate, SubjectController.getById);
 router.post('/subjects', authenticate, SubjectController.create);
 router.patch('/subjects/:id', authenticate, SubjectController.update);
@@ -62,6 +63,7 @@ router.get('/tasks/:id', authenticate, TaskController.getById);
 router.post('/tasks', authenticate, TaskController.create);
 router.patch('/tasks/:id', authenticate, TaskController.update);
 router.patch('/tasks/:id/complete', authenticate, TaskController.toggleComplete);
+router.patch('/tasks/:id/reopen-acceptance', authenticate, requireRole('professor', 'admin'), TaskController.reopenAcceptance);
 router.delete('/tasks/:id', authenticate, TaskController.delete);
 
 // ==========================================
@@ -92,10 +94,13 @@ router.delete('/schedule/sessions/:id', authenticate, ScheduleController.deleteS
 // 6. Student Notifications (Protected)
 // ==========================================
 router.get('/notifications', authenticate, NotificationController.list);
+router.post('/notifications', authenticate, NotificationController.create);
 router.post('/notifications/sync-events', authenticate, NotificationController.syncEvents);
 router.patch('/notifications/:id/read', authenticate, NotificationController.markRead);
+router.patch('/notifications/:id/unread', authenticate, NotificationController.markUnread);
 router.post('/notifications/read-all', authenticate, NotificationController.markAllRead);
 router.delete('/notifications/:id', authenticate, NotificationController.delete);
+router.delete('/notifications', authenticate, NotificationController.deleteAll);
 
 // ==========================================
 // 7. Academic Progress & Workload Analytics

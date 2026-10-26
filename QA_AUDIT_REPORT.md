@@ -4,15 +4,56 @@
 **Repository:** `Study-Flow`  
 **Runtime checked:** Bun 1.4.3, Node.js 24.18.0  
 **Audit mode:** Static analysis, logical data-flow analysis, and safe runtime checks  
-**Status:** 60 verified findings; no fixes applied
+**Status:** Remediation implemented for 63 of 64 findings; automated regression is green. `OPS-01` remains an external credential-rotation release gate.
+
+## Remediation Outcome (2026-10-26)
+
+This section supersedes the original pre-fix descriptions below. Those descriptions are retained as the historical defect record. "Resolved" means the defective code path was removed or corrected and TypeScript compilation passed. "Automated" additionally means a backend/integration assertion exercised the behavior. Visual browser checks remain in the QA Validation Plan for final acceptance.
+
+| Findings | Outcome | Remediation evidence |
+| --- | --- | --- |
+| FE-01, FE-06, FE-07 | Resolved + automated | API/JWT identity is authoritative, every protected request revalidates the database user, account data reloads cleanly, and planner/notification records persist per user. New-account isolation tests confirm zero subjects/tasks. |
+| FE-02, FE-04, FE-05, FE-09, FE-13 | Resolved + automated | Session editing uses the active edit target; completion/reopening is transactionally reconciled; actual minutes are retained; cancelled sessions are excluded. Workload idempotency tests pass. |
+| FE-03 | Resolved + automated | The frontend now awaits the authoritative backend constraint scheduler and passes its date range/options; local mock scheduling no longer creates a false success state. Scheduler and integration suites pass. |
+| FE-08, FE-10, FE-11 | Resolved | Admin mutations and settings use PostgreSQL, failures no longer report success, health cannot fabricate a mock healthy state, and audit requests are sequenced against current filters. |
+| FE-12, FE-14 | Resolved | Calendar/today calculations use local runtime dates; nonfunctional horizon controls were removed in favor of accurately labeled current-week analytics. |
+| FE-15, FE-16 | Resolved | Subject assignment links open the task detail flow, and the selected subject is honored by task creation. |
+| FE-17, FE-18, FE-19, FE-20 | Resolved | Full data/calendar exports include supported datasets, destructive actions require confirmation, zero-minute buffer is retained, and route restoration preserves query/hash state. |
+| FE-21 | Resolved | Insecure/broken demo role-switch controls were removed; admin access now requires real backend authentication. |
+| FE-22 | Resolved + automated | Professor is a persisted role; Professor completion is blocked in UI/API, deadline acceptance closes automatically, and Professor/Admin can reopen acceptance to a future timestamp. |
+| FE-23 | Resolved | Calendar block height now preserves the actual time scale, preventing adjacent short blocks from visually colliding; API constraints reject true overlaps. |
+| FE-24 | Resolved + automated | Empty-state and primary actions now show **Take Subject** for Students and **Add Faculty Load** for Professors, using only active admin-created catalog courses. |
+| FE-25 | Resolved | Missing/unreachable PostgreSQL now fails startup with an operator-facing fatal error; runtime database failures retain a safe 503 response and detailed server log. |
+| BE-01 through BE-07 | Resolved + automated | Auth throttling, announcement filtering, preference validation, serializable last-admin protection, manual scheduling invariants, atomic workload accounting, and UTF-8 password limits are implemented and covered by regression tests. |
+| BE-08 | Resolved + automated | `tokenVersion` is embedded in JWTs and incremented on logout/password reset; the integration suite proves a logged-out token is rejected. |
+| BE-09 through BE-21 | Resolved + automated | Strict types/dates/enums/booleans, session/task reconciliation, correct unscheduled coverage, cohort filtering, zero-minute accounting, and audit-atomic privileged writes are enforced. |
+| BE-22 through BE-26 | Resolved | Production secrets are validated, development binds locally, unknown API routes return JSON 404, security headers are enabled, and port validation fails cleanly. |
+| BE-27 | Resolved + automated | In-memory fallback was removed. Startup runs a real PostgreSQL readiness query before mounting Vite and refuses a missing `DATABASE_URL`. |
+| INT-01 through INT-09 | Resolved + automated | Frontend/backend identity and CRUD contracts are unified, admin mutations use returned server records, suspension is persisted separately, combined user edits are atomic, production build/start and Bun metadata are consistent, and pagination/empty responses are handled. |
+| INT-10 | Resolved + automated | `CatalogCourse` is separate from user `Subject` enrollment/faculty load. Only Admin controls catalog identity/credits; Student credit mutation is rejected; Professor faculty-load behavior is tested. |
+| INT-11 | Resolved + automated | `bun run dev`/`start` now require `prisma migrate status`; `db:ready` validates schema and migration readiness; server startup independently checks live database connectivity. Six migrations are applied. |
+| OPS-01 | **Open — external action required** | Repository templates are sanitized, but every credential disclosed outside the secret store must still be rotated at its provider and the old values proven invalid before release. |
+
+### Verification completed
+
+- `bun run lint` — passed.
+- `bun run build` — passed (one non-blocking bundle-size warning).
+- `bun run db:ready` — schema valid, six migrations found, database up to date.
+- `bun run test` — passed: backend 90/90, integration 66/66, persistence/reset 31/31, email/reset pipeline 41/41.
+- The configured PostgreSQL database received migrations for JWT revocation, Professor/catalog/settings persistence, account status, and faculty class schedules.
+- Current tracked files do not match the live-credential token patterns used in the disclosure check; provider-side rotation is still mandatory.
+
+### Remaining release gate
+
+`OPS-01` cannot be completed by editing this repository. Rotate the previously disclosed PostgreSQL password, object-storage access key/secret, Resend API key, and JWT secret. Update only the ignored local `.env`/deployment secret store, restart StudyFlow, and verify the old credentials and old JWTs are rejected.
 
 ## Scope
 
-This report covers frontend behavior, backend/API behavior, configuration, authentication, authorization, scheduling logic, and frontend-to-backend contracts.
+This report covers frontend behavior, backend/API behavior, configuration, authentication, authorization, scheduling logic, frontend-to-backend contracts, and the follow-up environment incident observed on 2026-10-26.
 
-The following areas were intentionally excluded:
+The original audit intentionally excluded the following areas; remediation necessarily added minimal schema and migration changes where required by the documented findings:
 
-- Database schemas and migrations
+- Database schema design and query-quality review (the follow-up records migration readiness only)
 - ORM model design and query quality
 - SQL, database indexes, and database configuration
 - Cosmetic style preferences that do not cause functional or serious maintainability problems
@@ -21,29 +62,27 @@ The following areas were intentionally excluded:
 
 ## Executive Summary
 
-| Severity  | Frontend | Backend | Integration |  Total |
-| --------- | -------: | ------: | ----------: | -----: |
-| Critical  |        0 |       0 |           1 |      1 |
-| High      |       11 |       6 |           6 |     23 |
-| Medium    |       11 |      17 |           3 |     31 |
-| Low       |        2 |       3 |           0 |      5 |
-| **Total** |   **24** |  **26** |      **10** | **60** |
+| Severity  | Frontend | Backend | Integration | Operations | Total |
+| --------- | -------: | ------: | ----------: | ---------: | ----: |
+| Critical  |        0 |       0 |           1 |          1 |     2 |
+| High      |       11 |       6 |           6 |          0 |    23 |
+| Medium    |       12 |      18 |           4 |          0 |    34 |
+| Low       |        2 |       3 |           0 |          0 |     5 |
+| **Total** |   **25** |  **27** |      **11** |      **1** | **64** |
 
 ### Highest-risk areas
 
-1. UI authentication, API authorization, and audit attribution use different identities, including a hardcoded shared administrator login.
-2. Schedule generation and completion accounting can violate availability constraints or corrupt remaining workload.
-3. Much of the student workspace is local-only, while several administrative screens report success for changes that were never saved.
-4. Role-based permissions for curriculum management, faculty loads, and assignment lifecycles are not properly segregated among Admins, Professors, and Students.
+1. The four former code-risk areas—identity, scheduling/accounting, persistence, and role boundaries—have been remediated and regression-tested.
+2. The remaining highest-risk item is operational: disclosed live infrastructure credentials must be rotated before release.
 
 ## Codebase Reconnaissance
 
 - **Frontend:** React 19, TypeScript, Vite 8, Tailwind CSS 4, React Router 7, Motion, React Context, and browser `localStorage`.
 - **Backend:** Express 4, TypeScript through `tsx`, JWT authentication, bcrypt, and REST routes under `/api`.
 - **Development runtime:** Express mounts Vite in middleware mode and serves both frontend and backend on port `3000`.
-- **Production runtime:** The declared `build` and `start` commands are incompatible; see `INT-06`.
-- **Package manager:** Bun is the selected workflow, but stale npm metadata and npm-oriented documentation remain; see `INT-09`.
-- **Environment:** No real `.env` is tracked. The example JWT value is predictable; see `BE-22`.
+- **Production runtime:** `bun run build` and the production server workflow are compatible and verified.
+- **Package manager:** Bun is the canonical workflow and lockfile.
+- **Environment:** The real `.env` remains ignored; `.env.example` contains placeholders only. PostgreSQL and migration readiness are mandatory before startup.
 
 ## Frontend Issues
 
@@ -594,12 +633,66 @@ The following areas were intentionally excluded:
 - **Reproduction:** Log in as a Student or Professor, navigate to Subjects, and observe the ability to create custom subjects, edit credit units, or use "Enroll Subject" as a faculty member.
 - **Impact:** Unauthorized curriculum modifications, inaccurate faculty load terminology, and uncoordinated subject schedules across roles.
 
+## Follow-up Configuration and Login Findings (2026-10-26)
+
+These findings were added after reproducing the user-facing message `Database service is temporarily unavailable`. No application-code remediation was authorized during this follow-up. Sensitive values are intentionally omitted.
+
+### FE-25 — Login error collapses configuration and schema failures into a generic outage
+
+- **Severity:** Medium
+- **Category:** Error Handling / Operability
+- **Location:** `src/pages/public/LoginPage.tsx`; `src/server/middleware/errorHandler.ts`; `src/server/db/prisma.ts`
+- **Problem:** The login page presents the same temporary-database-outage message for a missing `DATABASE_URL`, an old server process that has not reloaded `.env`, an unreachable provider, and an unapplied database migration.
+- **Reproduction:** Start the development server with an empty `.env`, attempt login, then save a valid `.env` without restarting the server and attempt login again.
+- **Impact:** Operators repeatedly retry credentials even though the failure is unrelated to the email or password, and the UI provides no correlation or development-only diagnostic path.
+
+### BE-27 — Development startup succeeds without its required database dependency
+
+- **Severity:** Medium
+- **Category:** Configuration / Availability
+- **Location:** `src/server/config/index.ts`; `src/server/db/prisma.ts`; `server.ts`
+- **Problem:** In development, a missing `DATABASE_URL` emits a warning but still starts the unified application. The frontend loads normally, while authentication and all persisted workflows fail later at request time.
+- **Reproduction:** Leave `.env` empty and run `bun run dev`; load the login page and submit valid-looking credentials.
+- **Impact:** The application appears healthy even though its core dependency is unavailable, producing a misleading partially running state and avoidable user-facing 503 responses.
+
+### INT-11 — Environment, migration, restart, and seed readiness are not verified as one workflow
+
+- **Severity:** Medium
+- **Category:** Integration / Deployment Readiness
+- **Location:** `.env.example`; `README.md`; `package.json`; `server.ts`; `prisma/migrations/`; `prisma/seed.ts`
+- **Problem:** Setup is split across manual steps without a single readiness check. Saving `.env` does not update an already running process, pending migrations are not detected before the login UI becomes available, and the known seed password applies only to explicitly seeded accounts—not to an arbitrary email entered on the login form.
+- **Observed evidence:** The saved `.env` was initially zero bytes. After a valid URL was saved, Prisma reached the configured PostgreSQL service, reported one pending migration, and the migration was deployed. The browser still required a full server restart and a verified account before login could be meaningfully retested.
+- **Reproduction:** Start with an empty `.env`, open the app, save valid environment values, deploy a pending migration, but leave the original server process running and try an email that was never seeded or registered.
+- **Impact:** A valid database can still appear unavailable, while seed credentials are mistakenly tested against unrelated accounts.
+
+### OPS-01 — Live infrastructure credentials were disclosed outside the secret store
+
+- **Severity:** Critical
+- **Category:** Secret Management / Incident Response
+- **Location:** External conversation history and the local git-ignored `.env`; affected providers include PostgreSQL, object storage, email delivery, and JWT signing.
+- **Problem:** Live-looking connection and API credentials were copied into a conversational channel. Git ignore rules prevent repository commits but do not make already disclosed credentials safe.
+- **Required response:** Revoke and rotate the database role password, object-storage access key pair, email-provider API key, and JWT signing secret. Do not reuse the disclosed values. Invalidate active JWTs after rotating the signing secret.
+- **Release gate:** Old credentials must be proven rejected, new credentials must exist only in approved secret stores/local ignored files, and repository/history secret scanning must pass before deployment.
+- **Impact:** Unauthorized database, storage, or email access and forged authentication tokens are possible until rotation is complete.
+
+### Sanitized follow-up evidence
+
+- The local `.env` is git-ignored.
+- The local `.env` now contains the required variable names; values were not recorded in this report.
+- Prisma successfully contacted the configured PostgreSQL database.
+- Migration `20261025_add_password_reset` was pending and was successfully deployed during diagnosis.
+- The currently displayed login failure has not yet been revalidated after a confirmed server restart.
+- The existence, role, and password state of the email used in the latest screenshot have not yet been verified.
+
 ## QA Validation Plan
 
 The following checklist should be executed after fixes begin. Each item maps back to one or more findings above.
 
 ### P0 — Security and identity
 
+- [ ] Rotate every credential covered by `OPS-01` and verify each disclosed credential is rejected.
+- [ ] Rotate the JWT secret and verify tokens signed with the disclosed secret no longer authenticate.
+- [ ] Run a secret scan across tracked files and repository history without printing secret values (`OPS-01`).
 - [ ] Verify that UI login creates and uses the authenticated user's backend token (`INT-01`).
 - [ ] Confirm that no administrator credentials exist in the client bundle (`INT-01`).
 - [ ] Attempt to edit browser storage and verify that it cannot grant protected access (`FE-01`).
@@ -611,6 +704,15 @@ The following checklist should be executed after fixes begin. Each item maps bac
 - [ ] Confirm role demotion cannot leave the deployment without an administrator (`BE-04`).
 - [ ] Force audit recording to fail and verify privileged changes do not silently succeed (`BE-20`).
 - [ ] Verify the "Admin Quick Demo Access" and "Switch to Admin Console" buttons authenticate and route to the Admin Console properly (`FE-21`).
+
+### P0 — Environment and database readiness
+
+- [ ] Start with no `DATABASE_URL` and verify the server fails fast with an operator-facing message before serving the login UI (`BE-27`).
+- [ ] Start with an unreachable database and verify readiness is reported as unhealthy without exposing connection details (`BE-27`).
+- [ ] Save or rotate `.env`, fully restart `bun run dev`, and confirm the new process loaded the updated variables (`INT-11`).
+- [ ] Run `prisma migrate status` and require zero pending migrations before authentication smoke tests (`INT-11`).
+- [ ] Verify the intended account exists, has the intended role, and is tested with its own password—not the seed password of a different account (`INT-11`).
+- [ ] Confirm configuration/schema failures are distinguishable in server logs while the browser retains a safe, actionable message (`FE-25`).
 
 ### P0 — Cross-account isolation and persistence
 

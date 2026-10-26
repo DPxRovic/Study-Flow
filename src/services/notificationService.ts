@@ -41,6 +41,10 @@ function normalizeNotification(raw: any): AcademicNotification {
 }
 
 export const notificationService = {
+  async create(data: Omit<AcademicNotification, 'id' | 'timestamp' | 'read'>): Promise<AcademicNotification> {
+    const res = await apiClient.post<{ success: boolean; data: any }>('/notifications', data);
+    return normalizeNotification(res.data);
+  },
   async list(params: NotificationQueryParams = {}): Promise<{ notifications: AcademicNotification[]; unreadCount: number }> {
     const query = new URLSearchParams();
     if (params.category && params.category !== 'all') query.set('category', params.category);
@@ -66,11 +70,20 @@ export const notificationService = {
     return normalizeNotification(res.data);
   },
 
+  async markUnread(id: string): Promise<AcademicNotification> {
+    const res = await apiClient.patch<{ success: boolean; data: any }>(`/notifications/${id}/unread`);
+    return normalizeNotification(res.data);
+  },
+
   async markAllRead(): Promise<void> {
     await apiClient.post<{ success: boolean; message: string }>('/notifications/read-all');
   },
 
   async delete(id: string): Promise<void> {
     await apiClient.delete<{ success: boolean; message: string }>(`/notifications/${id}`);
+  },
+
+  async deleteAll(): Promise<void> {
+    await apiClient.delete<{ success: boolean; message: string }>('/notifications');
   },
 };

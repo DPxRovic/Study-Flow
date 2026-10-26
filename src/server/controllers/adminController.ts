@@ -22,7 +22,7 @@ export class AdminController {
 
       if (role && typeof role === 'string' && role !== 'all') {
         const normRole = role.toUpperCase();
-        if (['STUDENT', 'ADMIN', 'ADVISOR', 'TA'].includes(normRole)) {
+        if (['STUDENT', 'ADMIN', 'PROFESSOR', 'ADVISOR', 'TA'].includes(normRole)) {
           whereClause.role = normRole;
         }
       }
@@ -56,6 +56,7 @@ export class AdminController {
             preferredBreakMinutes: true,
             preferredStudyTime: true,
             bufferMinutes: true,
+            accountStatus: true,
             createdAt: true,
             updatedAt: true,
             _count: {
@@ -86,6 +87,7 @@ export class AdminController {
           totalSessions: u._count.studySessions,
           createdAt: u.createdAt,
           updatedAt: u.updatedAt,
+          status: u.accountStatus === 'SUSPENDED' ? 'Suspended' : u.accountStatus === 'REVIEW' ? 'Review' : 'Active',
         })),
         meta: {
           total,
@@ -111,8 +113,8 @@ export class AdminController {
       const initialPassword = password ? validatePassword(password) : 'StudyFlow2026!#';
 
       const normRole = (role ? String(role).toUpperCase() : 'STUDENT') as any;
-      if (!['STUDENT', 'ADMIN', 'ADVISOR', 'TA'].includes(normRole)) {
-        throw ApiError.badRequest('Role must be student, admin, advisor, or ta');
+      if (!['STUDENT', 'ADMIN', 'PROFESSOR', 'ADVISOR', 'TA'].includes(normRole)) {
+        throw ApiError.badRequest('Role must be student, admin, professor, advisor, or ta');
       }
 
       const existing = await prisma.user.findUnique({ where: { email: validEmail } });
@@ -139,7 +141,7 @@ export class AdminController {
           },
         });
 
-        await logAdminAction({
+        const audit = await logAdminAction({
           adminId: req.user!.userId,
           adminEmail: req.user!.email,
           adminName: req.user!.name,
@@ -150,6 +152,8 @@ export class AdminController {
           details: `Provisioned ${normRole} account for ${validName} (${validEmail})`,
           ipAddress: req.ip,
         }, tx);
+
+        if (!audit) throw ApiError.internal('Account was not provisioned because audit recording failed');
 
         return created;
       });
@@ -192,7 +196,7 @@ export class AdminController {
 
         await tx.user.delete({ where: { id: targetUserId } });
 
-        await logAdminAction({
+        const audit = await logAdminAction({
           adminId: callerUserId,
           adminEmail: req.user!.email,
           adminName: req.user!.name,
@@ -203,6 +207,7 @@ export class AdminController {
           details: `Deleted ${target.role} account for ${target.name} (${target.email})`,
           ipAddress: req.ip,
         }, tx);
+        if (!audit) throw ApiError.internal('Account was not deleted because audit recording failed');
       });
 
       res.json({
@@ -278,8 +283,8 @@ export class AdminController {
       }
 
       const normRole = String(role).toUpperCase();
-      if (!['STUDENT', 'ADMIN', 'ADVISOR', 'TA'].includes(normRole)) {
-        throw ApiError.badRequest('Role must be one of: student, admin, advisor, ta');
+      if (!['STUDENT', 'ADMIN', 'PROFESSOR', 'ADVISOR', 'TA'].includes(normRole)) {
+        throw ApiError.badRequest('Role must be one of: student, admin, professor, advisor, ta');
       }
 
       // Safeguard 1: Prevent an administrator from demoting themselves directly
@@ -342,13 +347,20 @@ export class AdminController {
     try {
       const callerUserId = req.user!.userId;
       const targetUserId = validateId(req.params.id, 'User ID');
-      const { role, name, major } = req.body;
+      const { role, name, major, status } = req.body;
       const normalizedRole = role === undefined ? undefined : String(role).toUpperCase();
-      if (normalizedRole && !['STUDENT', 'ADMIN', 'ADVISOR', 'TA'].includes(normalizedRole)) {
-        throw ApiError.badRequest('Role must be one of: student, admin, advisor, ta');
+      if (normalizedRole && !['STUDENT', 'ADMIN', 'PROFESSOR', 'ADVISOR', 'TA'].includes(normalizedRole)) {
+        throw ApiError.badRequest('Role must be one of: student, admin, professor, advisor, ta');
       }
       if (callerUserId === targetUserId && normalizedRole && normalizedRole !== 'ADMIN') {
         throw ApiError.forbidden('Self-demotion is prohibited. Another administrator must change your role.');
+      }
+      const normalizedStatus = status === undefined ? undefined : String(status).toUpperCase();
+      if (normalizedStatus && !['ACTIVE', 'REVIEW', 'SUSPENDED'].includes(normalizedStatus)) {
+        throw ApiError.badRequest('Account status must be Active, Review, or Suspended');
+      }
+      if (callerUserId === targetUserId && normalizedStatus === 'SUSPENDED') {
+        throw ApiError.forbidden('Administrators cannot suspend their own account');
       }
 
       const updatedUser = await prisma.$transaction(async (tx: any) => {
@@ -366,6 +378,12 @@ export class AdminController {
         if (normalizedRole) updates.role = normalizedRole;
         if (name !== undefined) updates.name = validateString(name, 'Name', 2, 80);
         if (major !== undefined) updates.major = validateString(major, 'Academic Major', 2, 100);
+        if (normalizedStatus) {
+          updates.accountStatus = normalizedStatus;
+          if (normalizedStatus === 'SUSPENDED' && current.accountStatus !== 'SUSPENDED') {
+            updates.tokenVersion = { increment: 1 };
+          }
+        }
         if (Object.keys(updates).length === 0) {
           throw ApiError.badRequest('At least one editable user field is required');
         }
@@ -380,6 +398,7 @@ export class AdminController {
             role: true,
             major: true,
             term: true,
+            accountStatus: true,
             updatedAt: true,
           },
         });
@@ -401,7 +420,11 @@ export class AdminController {
       res.json({
         success: true,
         message: 'User directory profile updated',
-        data: { ...updatedUser, role: updatedUser.role.toLowerCase() },
+        data: {
+          ...updatedUser,
+          role: updatedUser.role.toLowerCase(),
+          status: updatedUser.accountStatus === 'SUSPENDED' ? 'Suspended' : updatedUser.accountStatus === 'REVIEW' ? 'Review' : 'Active',
+        },
       });
     } catch (err) {
       next(err);
@@ -414,7 +437,7 @@ export class AdminController {
     try {
       const callerUserId = req.user!.userId;
       const targetUserId = validateId(req.params.id, 'User ID');
-      const { term, major } = req.body;
+      const { term, major, status } = req.body;
 
       const targetUser = await prisma.user.findUnique({
         where: { id: targetUserId },
@@ -427,37 +450,53 @@ export class AdminController {
       const updates: any = {};
       if (term !== undefined) updates.term = validateString(term, 'Academic Term', 2, 50);
       if (major !== undefined) updates.major = validateString(major, 'Academic Major', 2, 100);
+      if (status !== undefined) {
+        const normalizedStatus = String(status).toUpperCase();
+        if (!['ACTIVE', 'REVIEW', 'SUSPENDED'].includes(normalizedStatus)) {
+          throw ApiError.badRequest('Account status must be Active, Review, or Suspended');
+        }
+        if (targetUserId === callerUserId && normalizedStatus === 'SUSPENDED') {
+          throw ApiError.forbidden('Administrators cannot suspend their own account');
+        }
+        updates.accountStatus = normalizedStatus;
+        if (normalizedStatus === 'SUSPENDED') updates.tokenVersion = { increment: 1 };
+      }
 
-      const updatedUser = await prisma.user.update({
-        where: { id: targetUserId },
-        data: updates,
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          role: true,
-          major: true,
-          term: true,
-          updatedAt: true,
-        },
-      });
+      if (Object.keys(updates).length === 0) {
+        throw ApiError.badRequest('At least one status or academic profile field is required');
+      }
 
-      await logAdminAction({
-        adminId: callerUserId,
-        adminEmail: req.user!.email,
-        adminName: req.user!.name,
-        action: 'USER_STATUS_CHANGE',
-        category: 'user_management',
-        targetId: targetUserId,
-        targetType: 'User',
-        details: `Updated academic status for ${targetUser.name} (${targetUser.email}): ${JSON.stringify(updates)}`,
-        ipAddress: req.ip,
+      const updatedUser = await prisma.$transaction(async (tx: any) => {
+        const updated = await tx.user.update({
+          where: { id: targetUserId },
+          data: updates,
+          select: {
+            id: true, email: true, name: true, role: true, major: true, term: true,
+            accountStatus: true, updatedAt: true,
+          },
+        });
+        const audit = await logAdminAction({
+          adminId: callerUserId,
+          adminEmail: req.user!.email,
+          adminName: req.user!.name,
+          action: 'USER_STATUS_CHANGE',
+          category: 'user_management',
+          targetId: targetUserId,
+          targetType: 'User',
+          details: `Updated academic/account status fields for ${targetUser.name} (${targetUser.email}): ${Object.keys(updates).join(', ')}`,
+          ipAddress: req.ip,
+        }, tx);
+        if (!audit) throw ApiError.internal('User status was not changed because audit recording failed');
+        return updated;
       });
 
       res.json({
         success: true,
         message: 'User academic profile status updated',
-        data: updatedUser,
+        data: {
+          ...updatedUser,
+          status: updatedUser.accountStatus === 'SUSPENDED' ? 'Suspended' : updatedUser.accountStatus === 'REVIEW' ? 'Review' : 'Active',
+        },
       });
     } catch (err) {
       next(err);
@@ -541,86 +580,22 @@ export class AdminController {
   // Master Institutional Curriculum Catalog overview
   static async getCatalog(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const allSubjects = await prisma.subject.findMany({
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          instructor: true,
-          credits: true,
-          colorKey: true,
-          weeklyTargetHours: true,
-          classroom: true,
-        },
+      const courses = await prisma.catalogCourse.findMany({
+        include: { _count: { select: { enrollments: true } } },
+        orderBy: { code: 'asc' },
       });
-
-      const inferDepartment = (code: string): string => {
-        const prefix = (code || '').split(' ')[0]?.toUpperCase() || '';
-        const deptMap: Record<string, string> = {
-          CS: 'Computer Science',
-          MATH: 'Mathematics',
-          BIO: 'Biology',
-          PHIL: 'Philosophy',
-          PHYS: 'Physics',
-          ECON: 'Economics',
-          CHEM: 'Chemistry',
-          ENG: 'English Literature',
-          HIST: 'History',
-          PSYC: 'Psychology',
-          ART: 'Fine Arts',
-          MUS: 'Music',
-          STAT: 'Statistics',
-          ENGR: 'Engineering',
-        };
-        return deptMap[prefix] || 'General Academics';
-      };
-
-      const catalogMap = new Map<string, any>();
-      for (const s of allSubjects) {
-        if (!catalogMap.has(s.code)) {
-          catalogMap.set(s.code, {
-            id: s.id,
-            code: s.code,
-            name: s.name,
-            title: s.name,
-            department: inferDepartment(s.code),
-            instructor: s.instructor || 'Staff Faculty',
-            credits: s.credits,
-            category: s.colorKey,
-            expectedWeeklyHours: s.weeklyTargetHours,
-            classroom: s.classroom || 'Main Campus',
-            activeEnrollments: 1,
-            activeEnrolledCount: 1,
-          });
-        } else {
-          const entry = catalogMap.get(s.code);
-          entry.activeEnrollments += 1;
-          entry.activeEnrolledCount += 1;
-        }
-      }
-
-      // If database has no subjects yet, provide standard institutional catalog defaults
-      if (catalogMap.size === 0) {
-        const defaults = [
-          { code: 'CS 201', title: 'Data Structures & Algorithms', department: 'Computer Science', credits: 4, instructor: 'Prof. Marcus Chen', expectedWeeklyHours: 8.0, activeEnrolledCount: 384 },
-          { code: 'MATH 241', title: 'Multivariable Calculus', department: 'Mathematics', credits: 4, instructor: 'Dr. Sarah Jenkins', expectedWeeklyHours: 8.0, activeEnrolledCount: 312 },
-          { code: 'BIO 110', title: 'Principles of Molecular Biology', department: 'Biology', credits: 3, instructor: 'Dr. Aris Thorne', expectedWeeklyHours: 6.0, activeEnrolledCount: 248 },
-          { code: 'PHIL 105', title: 'Ethics in the Information Age', department: 'Philosophy', credits: 3, instructor: 'Prof. David Morales', expectedWeeklyHours: 4.5, activeEnrolledCount: 165 },
-          { code: 'PHYS 211', title: 'Classical Mechanics & Thermal Physics', department: 'Physics', credits: 4, instructor: 'Dr. Hannah Weber', expectedWeeklyHours: 8.5, activeEnrolledCount: 194 },
-        ];
-        for (const d of defaults) {
-          catalogMap.set(d.code, { ...d, id: `cat_${d.code.replace(/\s+/g, '_')}`, name: d.title, activeEnrollments: d.activeEnrolledCount });
-        }
-      }
-
-      const masterCatalog = Array.from(catalogMap.values()).sort((a, b) => a.code.localeCompare(b.code));
+      const masterCatalog = courses.map(({ _count, ...course }: any) => ({
+        ...course,
+        name: course.title,
+        activeEnrolledCount: _count.enrollments,
+      }));
 
       res.json({
         success: true,
         data: masterCatalog,
         meta: {
           totalCatalogCourses: masterCatalog.length,
-          totalStudentEnrollments: allSubjects.length,
+          totalStudentEnrollments: courses.reduce((sum: number, course: any) => sum + course._count.enrollments, 0),
         },
       });
     } catch (err) {
@@ -635,48 +610,52 @@ export class AdminController {
       const { code, title, department, credits, instructor, expectedWeeklyHours, description, syllabusOverview } = req.body;
       const validCode = validateString(code, 'Course Code', 2, 20).toUpperCase();
       const validTitle = validateString(title, 'Course Title', 2, 120);
-      const validCredits = parseInt(String(credits || 4), 10) || 4;
-      const validHours = parseFloat(String(expectedWeeklyHours || 6.0)) || 6.0;
+      const validDepartment = validateString(department || 'General Academics', 'Department', 2, 100);
+      const validCredits = Number(credits ?? 4);
+      const validHours = Number(expectedWeeklyHours ?? 6.0);
+      if (!Number.isInteger(validCredits) || validCredits < 1 || validCredits > 12) {
+        throw ApiError.badRequest('Credits must be an integer between 1 and 12');
+      }
+      if (!Number.isFinite(validHours) || validHours < 0.5 || validHours > 40) {
+        throw ApiError.badRequest('Expected weekly hours must be between 0.5 and 40');
+      }
       const validInstructor = instructor ? validateString(instructor, 'Instructor', 2, 80) : 'Staff Faculty';
 
-      const created = await prisma.subject.create({
-        data: {
-          userId: req.user!.userId,
-          code: validCode,
-          name: validTitle,
-          credits: validCredits,
-          instructor: validInstructor,
-          weeklyTargetHours: validHours,
-          colorKey: validCode.toLowerCase().startsWith('cs') ? 'cs' : 'stem',
-        },
-      });
-
-      await logAdminAction({
-        adminId: req.user!.userId,
-        adminEmail: req.user!.email,
-        adminName: req.user!.name,
-        action: 'CURRICULUM_CREATE',
-        category: 'curriculum',
-        targetId: validCode,
-        targetType: 'Subject',
-        details: `Created master course ${validCode} ("${validTitle}", ${validCredits}cr) in ${department || 'General Academics'}`,
-        ipAddress: req.ip,
+      const created = await prisma.$transaction(async (tx: any) => {
+        const course = await tx.catalogCourse.create({
+          data: {
+            code: validCode,
+            title: validTitle,
+            department: validDepartment,
+            credits: validCredits,
+            instructor: validInstructor,
+            expectedWeeklyHours: validHours,
+            colorKey: validCode.toLowerCase().startsWith('cs') ? 'cs' : 'stem',
+            description: description ? validateString(description, 'Description', 0, 2000) : null,
+            syllabusOverview: syllabusOverview ? validateString(syllabusOverview, 'Syllabus overview', 0, 5000) : null,
+          },
+        });
+        const audit = await logAdminAction({
+          adminId: req.user!.userId,
+          adminEmail: req.user!.email,
+          adminName: req.user!.name,
+          action: 'CURRICULUM_CREATE',
+          category: 'curriculum',
+          targetId: validCode,
+          targetType: 'CatalogCourse',
+          details: `Created master course ${validCode} ("${validTitle}", ${validCredits}cr) in ${validDepartment}`,
+          ipAddress: req.ip,
+        }, tx);
+        if (!audit) throw ApiError.internal('Catalog course was not created because audit recording failed');
+        return course;
       });
 
       res.status(201).json({
         success: true,
         message: `Added ${validCode} to institutional curriculum`,
         data: {
-          id: created.id,
-          code: validCode,
-          title: validTitle,
-          name: validTitle,
-          department: department || 'General Academics',
-          credits: validCredits,
-          instructor: validInstructor,
-          expectedWeeklyHours: validHours,
-          description: description || '',
-          syllabusOverview: syllabusOverview || '',
+          ...created,
+          name: created.title,
           activeEnrolledCount: 0,
         },
       });
@@ -693,31 +672,43 @@ export class AdminController {
       const { title, credits, instructor, expectedWeeklyHours, department } = req.body;
 
       const updates: any = {};
-      if (title !== undefined) updates.name = validateString(title, 'Course Title', 2, 120);
-      if (credits !== undefined) updates.credits = parseInt(String(credits), 10) || 3;
+      if (title !== undefined) updates.title = validateString(title, 'Course Title', 2, 120);
+      if (department !== undefined) updates.department = validateString(department, 'Department', 2, 100);
+      if (credits !== undefined) {
+        const value = Number(credits);
+        if (!Number.isInteger(value) || value < 1 || value > 12) throw ApiError.badRequest('Credits must be an integer between 1 and 12');
+        updates.credits = value;
+      }
       if (instructor !== undefined) updates.instructor = validateString(instructor, 'Instructor', 2, 80);
-      if (expectedWeeklyHours !== undefined) updates.weeklyTargetHours = parseFloat(String(expectedWeeklyHours)) || 6.0;
+      if (expectedWeeklyHours !== undefined) {
+        const value = Number(expectedWeeklyHours);
+        if (!Number.isFinite(value) || value < 0.5 || value > 40) throw ApiError.badRequest('Expected weekly hours must be between 0.5 and 40');
+        updates.expectedWeeklyHours = value;
+      }
 
-      await prisma.subject.updateMany({
-        where: { code: targetCode },
-        data: updates,
-      });
-
-      await logAdminAction({
-        adminId: req.user!.userId,
-        adminEmail: req.user!.email,
-        adminName: req.user!.name,
-        action: 'CURRICULUM_UPDATE',
-        category: 'curriculum',
-        targetId: targetCode,
-        targetType: 'Subject',
-        details: `Updated curriculum specifications for ${targetCode}: ${JSON.stringify(updates)}`,
-        ipAddress: req.ip,
+      const existing = await prisma.catalogCourse.findUnique({ where: { code: targetCode } });
+      if (!existing) throw ApiError.notFound('Catalog course not found');
+      const updated = await prisma.$transaction(async (tx: any) => {
+        const course = await tx.catalogCourse.update({ where: { code: targetCode }, data: updates });
+        const audit = await logAdminAction({
+          adminId: req.user!.userId,
+          adminEmail: req.user!.email,
+          adminName: req.user!.name,
+          action: 'CURRICULUM_UPDATE',
+          category: 'curriculum',
+          targetId: targetCode,
+          targetType: 'CatalogCourse',
+          details: `Updated curriculum fields for ${targetCode}: ${Object.keys(updates).join(', ')}`,
+          ipAddress: req.ip,
+        }, tx);
+        if (!audit) throw ApiError.internal('Catalog course was not updated because audit recording failed');
+        return course;
       });
 
       res.json({
         success: true,
         message: `Updated syllabus specifications for ${targetCode}`,
+        data: { ...updated, name: updated.title },
       });
     } catch (err) {
       next(err);
@@ -730,20 +721,28 @@ export class AdminController {
     try {
       const targetCode = decodeURIComponent(req.params.code).toUpperCase();
 
-      await prisma.subject.deleteMany({
+      const existing = await prisma.catalogCourse.findUnique({
         where: { code: targetCode },
+        include: { _count: { select: { enrollments: true } } },
       });
-
-      await logAdminAction({
-        adminId: req.user!.userId,
-        adminEmail: req.user!.email,
-        adminName: req.user!.name,
-        action: 'CURRICULUM_DELETE',
-        category: 'curriculum',
-        targetId: targetCode,
-        targetType: 'Subject',
-        details: `Removed course ${targetCode} from master curriculum catalog`,
-        ipAddress: req.ip,
+      if (!existing) throw ApiError.notFound('Catalog course not found');
+      if (existing._count.enrollments > 0) {
+        throw ApiError.conflict('Catalog courses with active enrollments cannot be deleted; archive them instead');
+      }
+      await prisma.$transaction(async (tx: any) => {
+        await tx.catalogCourse.delete({ where: { code: targetCode } });
+        const audit = await logAdminAction({
+          adminId: req.user!.userId,
+          adminEmail: req.user!.email,
+          adminName: req.user!.name,
+          action: 'CURRICULUM_DELETE',
+          category: 'curriculum',
+          targetId: targetCode,
+          targetType: 'CatalogCourse',
+          details: `Removed course ${targetCode} from master curriculum catalog`,
+          ipAddress: req.ip,
+        }, tx);
+        if (!audit) throw ApiError.internal('Catalog course was not deleted because audit recording failed');
       });
 
       res.json({
@@ -759,9 +758,14 @@ export class AdminController {
   // Retrieves institutional settings
   static async getSettings(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
+      const settings = await prisma.institutionalSettings.upsert({
+        where: { id: 'global' },
+        create: { id: 'global' },
+        update: {},
+      });
       res.json({
         success: true,
-        data: AdminController.institutionalSettings,
+        data: settings,
       });
     } catch (err) {
       next(err);
@@ -772,30 +776,67 @@ export class AdminController {
   // Updates institutional settings with audit logging
   static async updateSettings(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const updates = req.body;
-      AdminController.institutionalSettings = {
-        ...AdminController.institutionalSettings,
-        ...updates,
-        updatedAt: new Date().toISOString(),
-        updatedBy: req.user!.name || req.user!.email,
-      };
+      const allowed = [
+        'termName', 'academicYear', 'startDate', 'endDate', 'censusDate',
+        'withdrawalDeadline', 'readingStart', 'readingEnd', 'finalsStart', 'finalsEnd',
+        'defaultDailyStudyCap', 'defaultSessionMinutes', 'overloadThreshold',
+      ];
+      const updates: any = {};
+      for (const key of allowed) {
+        if (req.body[key] !== undefined) updates[key] = req.body[key];
+      }
+      if (Object.keys(updates).length === 0) throw ApiError.badRequest('No supported settings were provided');
 
-      await logAdminAction({
-        adminId: req.user!.userId,
-        adminEmail: req.user!.email,
-        adminName: req.user!.name,
-        action: 'SETTINGS_UPDATE',
-        category: 'system',
-        targetType: 'System',
-        targetId: 'institutional_settings',
-        details: `Updated institutional policies and boundaries: ${JSON.stringify(updates)}`,
-        ipAddress: req.ip,
+      for (const key of ['termName', 'academicYear']) {
+        if (updates[key] !== undefined) updates[key] = validateString(updates[key], key, 2, 80);
+      }
+      for (const key of ['startDate', 'endDate', 'censusDate', 'withdrawalDeadline', 'readingStart', 'readingEnd', 'finalsStart', 'finalsEnd']) {
+        if (updates[key] !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(updates[key]))) {
+          throw ApiError.badRequest(`${key} must use YYYY-MM-DD format`);
+        }
+      }
+      if (updates.defaultDailyStudyCap !== undefined) {
+        const value = Number(updates.defaultDailyStudyCap);
+        if (!Number.isFinite(value) || value < 0.5 || value > 24) throw ApiError.badRequest('Default daily study cap must be between 0.5 and 24 hours');
+        updates.defaultDailyStudyCap = value;
+      }
+      if (updates.defaultSessionMinutes !== undefined) {
+        const value = Number(updates.defaultSessionMinutes);
+        if (!Number.isInteger(value) || value < 5 || value > 240) throw ApiError.badRequest('Default session minutes must be between 5 and 240');
+        updates.defaultSessionMinutes = value;
+      }
+      if (updates.overloadThreshold !== undefined) {
+        const value = Number(updates.overloadThreshold);
+        if (!Number.isFinite(value) || value < 1 || value > 24) throw ApiError.badRequest('Overload threshold must be between 1 and 24 hours');
+        updates.overloadThreshold = value;
+      }
+      updates.updatedBy = req.user!.name || req.user!.email;
+
+      const saved = await prisma.$transaction(async (tx: any) => {
+        const settings = await tx.institutionalSettings.upsert({
+          where: { id: 'global' },
+          create: { id: 'global', ...updates },
+          update: updates,
+        });
+        const audit = await logAdminAction({
+          adminId: req.user!.userId,
+          adminEmail: req.user!.email,
+          adminName: req.user!.name,
+          action: 'SETTINGS_UPDATE',
+          category: 'system',
+          targetType: 'System',
+          targetId: 'institutional_settings',
+          details: `Updated institutional setting fields: ${Object.keys(updates).filter((key) => key !== 'updatedBy').join(', ')}`,
+          ipAddress: req.ip,
+        }, tx);
+        if (!audit) throw ApiError.internal('Settings were not saved because audit recording failed');
+        return settings;
       });
 
       res.json({
         success: true,
         message: 'Institutional settings updated successfully',
-        data: AdminController.institutionalSettings,
+        data: saved,
       });
     } catch (err) {
       next(err);
@@ -820,7 +861,7 @@ export class AdminController {
       ] = await Promise.all([
         prisma.user.count({ where: { role: 'STUDENT' } }),
         prisma.user.count({ where: { role: 'ADMIN' } }),
-        prisma.user.count({ where: { role: { in: ['ADVISOR', 'TA'] } } }),
+        prisma.user.count({ where: { role: { in: ['PROFESSOR', 'ADVISOR', 'TA'] } } }),
         prisma.subject.count(),
         prisma.task.count(),
         prisma.task.count({ where: { status: 'COMPLETED' } }),

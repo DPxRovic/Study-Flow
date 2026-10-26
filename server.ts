@@ -31,6 +31,9 @@ async function start() {
   const { errorHandler } = await import('./src/server/middleware/errorHandler');
   const { securityHeaders, corsMiddleware } = await import('./src/server/middleware/security');
   const { config } = await import('./src/server/config');
+  const { assertDatabaseReady } = await import('./src/server/db/prisma');
+
+  await assertDatabaseReady();
 
   const app = express();
 

@@ -74,23 +74,28 @@ export function SchedulePage() {
   const [initialEditTask, setInitialEditTask] = useState<Task | undefined>(undefined);
 
   // Auto-generate handler
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!canGenerate) {
       showToast('Add a course, an active task, and at least one study window before generating a schedule.', 'info');
       return;
     }
     setIsGenerating(true);
-    setTimeout(() => {
-      const result = generateSchedule({
+    try {
+      const result = await generateSchedule({
         mode,
         maxDailyHours: user?.targetDailyStudyCapHours || 5.5,
+        startDate: weekDays[0]?.date,
+        endDate: weekDays[weekDays.length - 1]?.date,
       });
-      setIsGenerating(false);
       showToast(
         `Regenerated study plan (${result.generatedCount} sessions allocated, locked sessions preserved).`,
         'success'
       );
-    }, 450);
+    } catch {
+      // Planner context already displays the actionable API error.
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   // Open modal to add new session

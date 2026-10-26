@@ -34,6 +34,7 @@ export function SubjectModal({
   const [weeklyTargetHours, setWeeklyTargetHours] = useState('8');
   const [colorKey, setColorKey] = useState<SubjectCategory>('stem');
   const [classroom, setClassroom] = useState('');
+  const [classSchedule, setClassSchedule] = useState('');
   const [officeHours, setOfficeHours] = useState('');
   const [syllabusUrl, setSyllabusUrl] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -47,6 +48,7 @@ export function SubjectModal({
       setWeeklyTargetHours(subjectToEdit.weeklyTargetHours.toString());
       setColorKey(subjectToEdit.colorKey);
       setClassroom(subjectToEdit.classroom || '');
+      setClassSchedule(subjectToEdit.classSchedule || '');
       setOfficeHours(subjectToEdit.officeHours || '');
       setSyllabusUrl(subjectToEdit.syllabusUrl || '');
     } else {
@@ -57,6 +59,7 @@ export function SubjectModal({
       setWeeklyTargetHours('8');
       setColorKey('stem');
       setClassroom('');
+      setClassSchedule('');
       setOfficeHours('');
       setSyllabusUrl('');
     }
@@ -95,6 +98,7 @@ export function SubjectModal({
       weeklyTargetHours: parseFloat(weeklyTargetHours),
       colorKey,
       classroom: classroom.trim() || undefined,
+      classSchedule: classSchedule.trim() || undefined,
       officeHours: officeHours.trim() || undefined,
       syllabusUrl: syllabusUrl.trim() || undefined,
     };
@@ -204,6 +208,13 @@ export function SubjectModal({
             placeholder="e.g. Turing Hall 104"
             value={classroom}
             onChange={(e) => setClassroom(e.target.value)}
+          />
+
+          <Input
+            label="Class Schedule"
+            placeholder="e.g. Tue/Thu 10:00 - 11:30 AM"
+            value={classSchedule}
+            onChange={(e) => setClassSchedule(e.target.value)}
           />
 
           <Input

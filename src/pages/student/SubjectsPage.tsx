@@ -23,12 +23,14 @@ import { Badge } from '../../components/ui/Badge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { usePlanner } from '../../context/PlannerContext';
 import { useAuth } from '../../context/AuthContext';
-import { Subject, SubjectCategory, Task } from '../../types';
+import { CatalogCourse, Subject, Task } from '../../types';
 import { SUBJECT_CATEGORY_STYLES } from '../../theme/tokens';
 import { SubjectModal } from '../../components/subjects/SubjectModal';
 import { SubjectDetailModal } from '../../components/subjects/SubjectDetailModal';
 import { TaskModal } from '../../components/tasks/TaskModal';
 import { TaskDetailModal } from '../../components/tasks/TaskDetailModal';
+import { Modal } from '../../components/ui/Modal';
+import { subjectService } from '../../services/subjectService';
 
 export function SubjectsPage() {
   const { user } = useAuth();
@@ -42,11 +44,15 @@ export function SubjectsPage() {
     updateTask,
     deleteTask,
     toggleTaskCompleted,
+    reopenTaskAcceptance,
   } = usePlanner();
 
   // Modals state
   const [isSubjectModalOpen, setIsSubjectModalOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
+  const [catalog, setCatalog] = useState<CatalogCourse[]>([]);
+  const [selectedCatalogCourseId, setSelectedCatalogCourseId] = useState('');
+  const [isCatalogLoading, setIsCatalogLoading] = useState(false);
   const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
 
   // Quick Task Creation for a Subject
@@ -63,9 +69,19 @@ export function SubjectsPage() {
     .filter((t) => t.status !== 'completed')
     .reduce((acc, t) => acc + t.remainingHours, 0);
 
-  const handleOpenAdd = () => {
+  const handleOpenAdd = async () => {
     setEditingSubject(null);
+    setIsCatalogLoading(true);
     setIsSubjectModalOpen(true);
+    try {
+      const courses = await subjectService.catalog();
+      const enrolledIds = new Set(subjects.map((subject) => subject.catalogCourseId));
+      const available = courses.filter((course) => !enrolledIds.has(course.id));
+      setCatalog(available);
+      setSelectedCatalogCourseId(available[0]?.id || '');
+    } finally {
+      setIsCatalogLoading(false);
+    }
   };
 
   const handleOpenEdit = (subject: Subject) => {
@@ -75,10 +91,27 @@ export function SubjectsPage() {
 
   const handleSaveSubject = (subjectData: Omit<Subject, 'id'>, id?: string) => {
     if (id) {
-      updateSubject(id, subjectData);
-    } else {
-      addSubject(subjectData);
+      const permittedUpdates = user?.role === 'professor'
+        ? {
+            instructor: subjectData.instructor,
+            colorKey: subjectData.colorKey,
+            weeklyTargetHours: subjectData.weeklyTargetHours,
+            classroom: subjectData.classroom,
+            classSchedule: subjectData.classSchedule,
+            officeHours: subjectData.officeHours,
+          }
+        : {
+            colorKey: subjectData.colorKey,
+            weeklyTargetHours: subjectData.weeklyTargetHours,
+          };
+      updateSubject(id, permittedUpdates);
     }
+  };
+
+  const handleTakeSubject = async () => {
+    if (!selectedCatalogCourseId) return;
+    const created = await addSubject({ catalogCourseId: selectedCatalogCourseId });
+    if (created) setIsSubjectModalOpen(false);
   };
 
   const handleAddTaskForSubject = (subId: string) => {
@@ -117,10 +150,12 @@ export function SubjectsPage() {
             Curriculum Structure · {user?.term || 'Current Term'}
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-            Enrolled Courses & Subjects
+            {user?.role === 'professor' ? 'Faculty Load & Subjects' : 'Enrolled Courses & Subjects'}
           </h1>
           <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-xl font-medium leading-relaxed">
-            Manage course credits, instructors, weekly study targets, and classroom logistics.
+            {user?.role === 'professor'
+              ? 'Manage faculty course logistics and weekly planning targets.'
+              : 'Manage weekly study targets for subjects approved in the institutional catalog.'}
           </p>
         </div>
 
@@ -129,7 +164,7 @@ export function SubjectsPage() {
           onClick={handleOpenAdd}
           icon={<Plus className="w-4 h-4" />}
         >
-          Enroll Subject
+          {user?.role === 'professor' ? 'Add Faculty Load' : 'Take Subject'}
         </Button>
       </div>
 
@@ -200,9 +235,9 @@ export function SubjectsPage() {
       {subjects.length === 0 ? (
         <EmptyState
           icon={<BookOpen className="w-6 h-6 text-sky-600" />}
-          title="Add your first course"
-          description="Enroll in your semester courses to configure study targets and plan your academic week."
-          actionLabel="Add Your First Course"
+          title={user?.role === 'professor' ? 'Add your first faculty course' : 'Take your first subject'}
+          description="Choose an administrator-approved course from the institutional curriculum catalog."
+          actionLabel={user?.role === 'professor' ? 'Add Faculty Load' : 'Take Subject'}
           onAction={handleOpenAdd}
         />
       ) : (
@@ -337,8 +372,43 @@ export function SubjectsPage() {
           4. MODALS
          ========================================================================= */}
       {/* Subject Enrollment / Edit Modal */}
+      <Modal
+        isOpen={isSubjectModalOpen && !editingSubject}
+        onClose={() => setIsSubjectModalOpen(false)}
+        title={user?.role === 'professor' ? 'Add Faculty Load' : 'Take Subject'}
+        description="Only courses created by a campus administrator are available here."
+        maxWidth="lg"
+        icon={<BookOpen className="w-4 h-4" />}
+      >
+        <div className="space-y-4">
+          {isCatalogLoading ? (
+            <p className="text-sm text-slate-500">Loading institutional catalog...</p>
+          ) : catalog.length === 0 ? (
+            <p className="text-sm text-slate-600">No additional active courses are available. Ask an administrator to add one to the curriculum catalog.</p>
+          ) : (
+            <select
+              value={selectedCatalogCourseId}
+              onChange={(event) => setSelectedCatalogCourseId(event.target.value)}
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+            >
+              {catalog.map((course) => (
+                <option key={course.id} value={course.id}>
+                  {course.code} — {course.title} ({course.credits} credits)
+                </option>
+              ))}
+            </select>
+          )}
+          <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+            <Button variant="secondary" onClick={() => setIsSubjectModalOpen(false)}>Cancel</Button>
+            <Button variant="primary" disabled={!selectedCatalogCourseId || isCatalogLoading} onClick={handleTakeSubject}>
+              {user?.role === 'professor' ? 'Add to Faculty Load' : 'Take Subject'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       <SubjectModal
-        isOpen={isSubjectModalOpen}
+        isOpen={isSubjectModalOpen && !!editingSubject}
         onClose={() => {
           setIsSubjectModalOpen(false);
           setEditingSubject(null);
@@ -399,6 +469,7 @@ export function SubjectsPage() {
           }
         }}
         onToggleComplete={toggleTaskCompleted}
+        onReopenAcceptance={reopenTaskAcceptance}
         onToggleSubtask={handleToggleSubtask}
       />
     </div>

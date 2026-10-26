@@ -7,52 +7,25 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { PrismaClient } from '@prisma/client';
-import { createPrismaMock } from './prismaMock';
 
 declare global {
   // eslint-disable-next-line no-var
-  var __studyflow_prisma: PrismaClient | any | undefined;
-  // eslint-disable-next-line no-var
-  var __studyflow_is_mock: boolean | undefined;
+  var __studyflow_prisma: PrismaClient | undefined;
 }
 
-const databaseUrl = process.env.DATABASE_URL;
-const hasValidDatabaseUrl = Boolean(databaseUrl && databaseUrl.trim() !== '');
-
-let clientInstance: any;
-let isMockActive = false;
-
-if (hasValidDatabaseUrl) {
-  try {
-    clientInstance =
-      global.__studyflow_prisma ||
-      new PrismaClient({
-        log:
-          process.env.NODE_ENV === 'development'
-            ? ['warn', 'error']
-            : ['error'],
-      });
-  } catch {
-    console.warn('[AI Studio] Database connection error — using in-memory mock store');
-    clientInstance = createPrismaMock();
-    isMockActive = true;
-  }
-} else {
-  console.info('[AI Studio] DATABASE_URL not set — using comprehensive in-memory mock store');
-  clientInstance = global.__studyflow_prisma || createPrismaMock();
-  isMockActive = true;
-}
-
-export const prisma: PrismaClient = clientInstance;
+export const prisma: PrismaClient =
+  global.__studyflow_prisma ||
+  new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
+  });
 
 if (process.env.NODE_ENV !== 'production') {
   global.__studyflow_prisma = prisma;
-  global.__studyflow_is_mock = isMockActive;
 }
 
 /**
- * Health check helper that distinguishes real database connectivity from web server process availability.
- * Never leaks credentials or connection strings in responses.
+ * Check the authoritative PostgreSQL store. This must never report a mock or
+ * fallback data source as healthy.
  */
 export async function checkDatabaseHealth(): Promise<{
   ok: boolean;
@@ -60,14 +33,6 @@ export async function checkDatabaseHealth(): Promise<{
   latencyMs: number;
 }> {
   const start = Date.now();
-  if (isMockActive || !hasValidDatabaseUrl) {
-    return {
-      ok: true,
-      message: 'In-memory academic database store operational and healthy',
-      latencyMs: Math.max(1, Date.now() - start),
-    };
-  }
-
   try {
     await prisma.$queryRaw`SELECT 1`;
     return {
@@ -76,24 +41,28 @@ export async function checkDatabaseHealth(): Promise<{
       latencyMs: Date.now() - start,
     };
   } catch (err: any) {
-    const latency = Date.now() - start;
-    console.warn('[HealthCheck] PostgreSQL unreachable, falling back to mock:', err?.message);
+    console.error('[HealthCheck] PostgreSQL is unavailable:', err?.message);
     return {
-      ok: true,
-      message: 'Database operational (in-memory mock mode)',
-      latencyMs: latency,
+      ok: false,
+      message: 'PostgreSQL database is unavailable',
+      latencyMs: Date.now() - start,
     };
   }
 }
 
-/**
- * Graceful database disconnection
- */
+/** Refuse to serve the application until its authoritative store is ready. */
+export async function assertDatabaseReady(): Promise<void> {
+  const health = await checkDatabaseHealth();
+  if (!health.ok) {
+    throw new Error(
+      '[FATAL] PostgreSQL readiness check failed. Verify DATABASE_URL and applied migrations.'
+    );
+  }
+}
+
 export async function disconnectDatabase(): Promise<void> {
   try {
-    if (typeof prisma.$disconnect === 'function') {
-      await prisma.$disconnect();
-    }
+    await prisma.$disconnect();
   } catch (err: any) {
     console.error('[Database] Disconnect error:', err?.message);
   }
