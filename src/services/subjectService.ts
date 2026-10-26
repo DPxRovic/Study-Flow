@@ -4,7 +4,7 @@
  */
 
 import { apiClient } from './apiClient';
-import { Subject } from '../types';
+import { CatalogCourse, Subject } from '../types';
 
 export interface SubjectListResponse {
   success: boolean;
@@ -29,7 +29,12 @@ export const subjectService = {
     return res.data;
   },
 
-  async create(subject: Omit<Subject, 'id'>): Promise<Subject> {
+  async catalog(): Promise<CatalogCourse[]> {
+    const res = await apiClient.get<{ success: boolean; data: CatalogCourse[] }>('/catalog');
+    return res.data || [];
+  },
+
+  async create(subject: { catalogCourseId: string; weeklyTargetHours?: number; colorKey?: string; classroom?: string; classSchedule?: string; officeHours?: string }): Promise<Subject> {
     const res = await apiClient.post<{ success: boolean; data: Subject; message: string }>('/subjects', subject);
     return res.data;
   },

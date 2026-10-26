@@ -4,13 +4,54 @@
 **Repository:** `Study-Flow`  
 **Runtime checked:** Bun 1.4.3, Node.js 24.18.0  
 **Audit mode:** Static analysis, logical data-flow analysis, and safe runtime checks  
-**Status:** 64 documented findings (60 original + 4 follow-up); remediation and full regression testing await the user's go signal
+**Status:** Remediation implemented for 63 of 64 findings; automated regression is green. `OPS-01` remains an external credential-rotation release gate.
+
+## Remediation Outcome (2026-10-26)
+
+This section supersedes the original pre-fix descriptions below. Those descriptions are retained as the historical defect record. "Resolved" means the defective code path was removed or corrected and TypeScript compilation passed. "Automated" additionally means a backend/integration assertion exercised the behavior. Visual browser checks remain in the QA Validation Plan for final acceptance.
+
+| Findings | Outcome | Remediation evidence |
+| --- | --- | --- |
+| FE-01, FE-06, FE-07 | Resolved + automated | API/JWT identity is authoritative, every protected request revalidates the database user, account data reloads cleanly, and planner/notification records persist per user. New-account isolation tests confirm zero subjects/tasks. |
+| FE-02, FE-04, FE-05, FE-09, FE-13 | Resolved + automated | Session editing uses the active edit target; completion/reopening is transactionally reconciled; actual minutes are retained; cancelled sessions are excluded. Workload idempotency tests pass. |
+| FE-03 | Resolved + automated | The frontend now awaits the authoritative backend constraint scheduler and passes its date range/options; local mock scheduling no longer creates a false success state. Scheduler and integration suites pass. |
+| FE-08, FE-10, FE-11 | Resolved | Admin mutations and settings use PostgreSQL, failures no longer report success, health cannot fabricate a mock healthy state, and audit requests are sequenced against current filters. |
+| FE-12, FE-14 | Resolved | Calendar/today calculations use local runtime dates; nonfunctional horizon controls were removed in favor of accurately labeled current-week analytics. |
+| FE-15, FE-16 | Resolved | Subject assignment links open the task detail flow, and the selected subject is honored by task creation. |
+| FE-17, FE-18, FE-19, FE-20 | Resolved | Full data/calendar exports include supported datasets, destructive actions require confirmation, zero-minute buffer is retained, and route restoration preserves query/hash state. |
+| FE-21 | Resolved | Insecure/broken demo role-switch controls were removed; admin access now requires real backend authentication. |
+| FE-22 | Resolved + automated | Professor is a persisted role; Professor completion is blocked in UI/API, deadline acceptance closes automatically, and Professor/Admin can reopen acceptance to a future timestamp. |
+| FE-23 | Resolved | Calendar block height now preserves the actual time scale, preventing adjacent short blocks from visually colliding; API constraints reject true overlaps. |
+| FE-24 | Resolved + automated | Empty-state and primary actions now show **Take Subject** for Students and **Add Faculty Load** for Professors, using only active admin-created catalog courses. |
+| FE-25 | Resolved | Missing/unreachable PostgreSQL now fails startup with an operator-facing fatal error; runtime database failures retain a safe 503 response and detailed server log. |
+| BE-01 through BE-07 | Resolved + automated | Auth throttling, announcement filtering, preference validation, serializable last-admin protection, manual scheduling invariants, atomic workload accounting, and UTF-8 password limits are implemented and covered by regression tests. |
+| BE-08 | Resolved + automated | `tokenVersion` is embedded in JWTs and incremented on logout/password reset; the integration suite proves a logged-out token is rejected. |
+| BE-09 through BE-21 | Resolved + automated | Strict types/dates/enums/booleans, session/task reconciliation, correct unscheduled coverage, cohort filtering, zero-minute accounting, and audit-atomic privileged writes are enforced. |
+| BE-22 through BE-26 | Resolved | Production secrets are validated, development binds locally, unknown API routes return JSON 404, security headers are enabled, and port validation fails cleanly. |
+| BE-27 | Resolved + automated | In-memory fallback was removed. Startup runs a real PostgreSQL readiness query before mounting Vite and refuses a missing `DATABASE_URL`. |
+| INT-01 through INT-09 | Resolved + automated | Frontend/backend identity and CRUD contracts are unified, admin mutations use returned server records, suspension is persisted separately, combined user edits are atomic, production build/start and Bun metadata are consistent, and pagination/empty responses are handled. |
+| INT-10 | Resolved + automated | `CatalogCourse` is separate from user `Subject` enrollment/faculty load. Only Admin controls catalog identity/credits; Student credit mutation is rejected; Professor faculty-load behavior is tested. |
+| INT-11 | Resolved + automated | `bun run dev`/`start` now require `prisma migrate status`; `db:ready` validates schema and migration readiness; server startup independently checks live database connectivity. Six migrations are applied. |
+| OPS-01 | **Open — external action required** | Repository templates are sanitized, but every credential disclosed outside the secret store must still be rotated at its provider and the old values proven invalid before release. |
+
+### Verification completed
+
+- `bun run lint` — passed.
+- `bun run build` — passed (one non-blocking bundle-size warning).
+- `bun run db:ready` — schema valid, six migrations found, database up to date.
+- `bun run test` — passed: backend 90/90, integration 66/66, persistence/reset 31/31, email/reset pipeline 41/41.
+- The configured PostgreSQL database received migrations for JWT revocation, Professor/catalog/settings persistence, account status, and faculty class schedules.
+- Current tracked files do not match the live-credential token patterns used in the disclosure check; provider-side rotation is still mandatory.
+
+### Remaining release gate
+
+`OPS-01` cannot be completed by editing this repository. Rotate the previously disclosed PostgreSQL password, object-storage access key/secret, Resend API key, and JWT secret. Update only the ignored local `.env`/deployment secret store, restart StudyFlow, and verify the old credentials and old JWTs are rejected.
 
 ## Scope
 
 This report covers frontend behavior, backend/API behavior, configuration, authentication, authorization, scheduling logic, frontend-to-backend contracts, and the follow-up environment incident observed on 2026-10-26.
 
-The following areas were intentionally excluded:
+The original audit intentionally excluded the following areas; remediation necessarily added minimal schema and migration changes where required by the documented findings:
 
 - Database schema design and query-quality review (the follow-up records migration readiness only)
 - ORM model design and query quality
@@ -31,20 +72,17 @@ The following areas were intentionally excluded:
 
 ### Highest-risk areas
 
-1. UI authentication, API authorization, and audit attribution use different identities, including a hardcoded shared administrator login.
-2. Schedule generation and completion accounting can violate availability constraints or corrupt remaining workload.
-3. Much of the student workspace is local-only, while several administrative screens report success for changes that were never saved.
-4. Role-based permissions for curriculum management, faculty loads, and assignment lifecycles are not properly segregated among Admins, Professors, and Students.
-5. Live infrastructure credentials were disclosed outside the local secret store and must be rotated before any release or further connectivity testing.
+1. The four former code-risk areas—identity, scheduling/accounting, persistence, and role boundaries—have been remediated and regression-tested.
+2. The remaining highest-risk item is operational: disclosed live infrastructure credentials must be rotated before release.
 
 ## Codebase Reconnaissance
 
 - **Frontend:** React 19, TypeScript, Vite 8, Tailwind CSS 4, React Router 7, Motion, React Context, and browser `localStorage`.
 - **Backend:** Express 4, TypeScript through `tsx`, JWT authentication, bcrypt, and REST routes under `/api`.
 - **Development runtime:** Express mounts Vite in middleware mode and serves both frontend and backend on port `3000`.
-- **Production runtime:** The declared `build` and `start` commands are incompatible; see `INT-06`.
-- **Package manager:** Bun is the selected workflow, but stale npm metadata and npm-oriented documentation remain; see `INT-09`.
-- **Environment:** No real `.env` is tracked. The example JWT value is predictable; see `BE-22`.
+- **Production runtime:** `bun run build` and the production server workflow are compatible and verified.
+- **Package manager:** Bun is the canonical workflow and lockfile.
+- **Environment:** The real `.env` remains ignored; `.env.example` contains placeholders only. PostgreSQL and migration readiness are mandatory before startup.
 
 ## Frontend Issues
 

@@ -59,20 +59,20 @@ StudyFlow features 19 fully functional routes with zero "Coming Soon" placeholde
 
 ### 1. Public & Authentication Routes
 - **`/` (`LandingPage`)**: Product introduction, "What do I need to do today?" preview, and student CTA.
-- **`/login` (`LoginPage`)**: Student & Admin authentication with 1-click quick-demo login buttons.
+- **`/login` (`LoginPage`)**: Backend-authenticated sign-in for Student, Professor, support, and Admin roles.
 - **`/register` (`RegisterPage`)**: Student onboarding capturing academic major and semester term.
 - **`/forgot-password` (`ForgotPasswordPage`)**: Clean password recovery screen.
 
 ### 2. Student Workspace (`StudentLayout`)
 - **`/dashboard` (`DashboardPage`)**: Prime question answer, hero spotlight card, day gauge, and deadlines queue.
 - **`/tasks` (`TasksPage`)**: Assignment queue with search, category filtering, subtasks, and add-task modal.
-- **`/subjects` (`SubjectsPage`)**: Course cards with credit counts, instructors, classroom locations, and office hours.
+- **`/subjects` (`SubjectsPage`)**: Student **Take Subject** and Professor **Add Faculty Load** flows backed by the admin-managed catalog.
 - **`/availability` (`AvailabilityPage`)**: 7-day recurring grid distinguishing lectures, work shifts, and open study windows, plus daily study cap slider ($2\text{h}$–$10\text{h}$).
 - **`/schedule` (`SchedulePage`)**: Deterministic study schedule generator (Balanced, Front-Loaded, Pomodoro) with session locking and overload diagnostics.
 - **`/calendar` (`CalendarPage`)**: Month & week grid integrating classes, deadlines, and study blocks with day agenda drawer.
 - **`/progress` (`ProgressPage`)**: Honest study hours pacing (planned vs completed), course balance distribution, and streak tracker.
 - **`/notifications` (`NotificationsPage`)**: Deadline alerts ($48\text{h}$ / $24\text{h}$), rescheduling prompts, and campus announcements.
-- **`/settings` (`SettingsPage`)**: Daily study caps, default session duration, data export to JSON, and demo reset.
+- **`/settings` (`SettingsPage`)**: Daily study caps, default session duration, complete account-data export, and authoritative data reload.
 
 ### 3. Admin Workspace (`AdminLayout`)
 - **`/admin` (`AdminDashboardPage`)**: Cohort enrollment metrics, weekly study hours logged, and crunch index warnings.
@@ -86,7 +86,7 @@ StudyFlow features 19 fully functional routes with zero "Coming Soon" placeholde
 
 ## 🧠 Deterministic Scheduling Engine
 
-StudyFlow implements a deterministic **greedy knapsack algorithm with interval spreading** (Anti-Cram Engine):
+StudyFlow implements a deterministic **constraint scheduler with bounded recursive backtracking** (Anti-Cram Engine):
 1. **Anti-Cram Principle**: Automatically spreads long deliverables across multiple days rather than scheduling 8 hours the night before a deadline.
 2. **Fatigue Limits**: Chunks study blocks into human-scale sessions ($45\text{m}$–$90\text{m}$) with mandatory breaks.
 3. **Daily Cap Safeguard**: Caps daily study hours at the student's configured threshold (default 5.5h) to safeguard mental health.
@@ -98,7 +98,7 @@ StudyFlow implements a deterministic **greedy knapsack algorithm with interval s
 ## 🛠️ Tech Stack & Architecture
 
 - **Framework**: React 19 (SPA on Vite 8)
-- **Language**: TypeScript 5.7 (Strict mode, zero compilation/type errors)
+- **Language**: TypeScript 7 (strict mode)
 - **Styling**: Tailwind CSS v4 (`@tailwindcss/vite`) + `@theme` CSS variables
 - **Typography**: Google Fonts — Plus Jakarta Sans (Headings/prose) & JetBrains Mono (Tabular numerals)
 - **Routing**: React Router v7 (`react-router-dom`)
@@ -127,6 +127,7 @@ StudyFlow utilizes a unified full-stack architecture where the Express API serve
 
 ```bash
 # Start unified full-stack development server (Port 3000)
+# This first verifies that the Prisma schema has no pending migrations.
 bun run dev
 
 # Run TypeScript type check
@@ -142,6 +143,7 @@ bun run start
 ### Database Operations (PostgreSQL with Prisma ORM)
 ```bash
 bun run db:validate    # Validate Prisma schema
+bun run db:ready       # Validate schema and require zero pending migrations
 bun run db:migrate     # Run development database migrations
 bun run db:deploy      # Apply migrations in production deployment
 bun run db:seed        # Seed explicitly requested development data
@@ -152,7 +154,7 @@ bun run db:seed        # Seed explicitly requested development data
 # 1. Run Core Academic Backend & Availability Suite (90 tests)
 bun run test:backend
 
-# 2. Run Full-Stack E2E Client-Server Integration Suite (57 tests)
+# 2. Run Full-Stack E2E Client-Server Integration Suite (66 tests)
 bun run test:integration
 
 # 3. Run all automated tests

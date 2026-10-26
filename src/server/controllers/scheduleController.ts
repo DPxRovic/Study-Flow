@@ -733,7 +733,7 @@ export class ScheduleController {
       } = req.body || {};
 
       // 1. Date normalization & validation
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = localDateKey();
       const startStr = startDate ? validateDateFormat(String(startDate), 'Start date') : todayStr;
 
       let endStr: string;

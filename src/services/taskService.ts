@@ -48,6 +48,8 @@ function normalizeTask(raw: any): Task {
           completed: Boolean(s.completed),
         }))
       : undefined,
+    acceptanceOpen: Boolean(raw.acceptanceOpen),
+    acceptanceReopenedUntil: raw.acceptanceReopenedUntil || undefined,
   };
 }
 
@@ -91,6 +93,14 @@ export const taskService = {
 
   async toggleComplete(id: string): Promise<Task> {
     const res = await apiClient.patch<{ success: boolean; data: any; message: string }>(`/tasks/${id}/complete`);
+    return normalizeTask(res.data);
+  },
+
+  async reopenAcceptance(id: string, until: string): Promise<Task> {
+    const res = await apiClient.patch<{ success: boolean; data: any; message: string }>(
+      `/tasks/${id}/reopen-acceptance`,
+      { until }
+    );
     return normalizeTask(res.data);
   },
 

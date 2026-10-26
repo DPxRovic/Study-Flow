@@ -39,6 +39,7 @@ type SortOption = 'dueDateAsc' | 'dueDateDesc' | 'priorityDesc' | 'hoursDesc' | 
 export function TasksPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const canCompleteAssignments = user?.role !== 'professor';
   const {
     tasks,
     subjects,
@@ -46,6 +47,7 @@ export function TasksPage() {
     updateTask,
     deleteTask,
     toggleTaskCompleted,
+    reopenTaskAcceptance,
   } = usePlanner();
 
   // Search & Filter state
@@ -606,7 +608,7 @@ export function TasksPage() {
                   {/* Left: Checkbox + Aligned Priority + Aligned Course + Title & Details */}
                   <div className="flex items-center gap-3.5 min-w-0 flex-1">
                     {/* Completion Checkbox */}
-                    <button
+                    {canCompleteAssignments && <button
                       type="button"
                       onClick={() => toggleTaskCompleted(task.id)}
                       className={`w-5 h-5 rounded-md flex items-center justify-center border transition-all cursor-pointer shrink-0 ${
@@ -617,7 +619,7 @@ export function TasksPage() {
                       aria-label={isCompleted ? 'Mark task incomplete' : 'Mark task complete'}
                     >
                       {isCompleted && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                    </button>
+                    </button>}
 
                     {/* Dedicated Aligned Priority Indicator Lane */}
                     <div className="w-24 shrink-0 flex items-center justify-center">
@@ -795,7 +797,7 @@ export function TasksPage() {
 
                   {/* Middle: Checkbox + Title */}
                   <div className="flex items-start gap-3">
-                    <button
+                    {canCompleteAssignments && <button
                       type="button"
                       onClick={() => toggleTaskCompleted(task.id)}
                       className={`w-5 h-5 rounded-md mt-0.5 flex items-center justify-center border transition-all cursor-pointer shrink-0 ${
@@ -806,7 +808,7 @@ export function TasksPage() {
                       aria-label={isCompleted ? 'Mark task incomplete' : 'Mark task complete'}
                     >
                       {isCompleted && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                    </button>
+                    </button>}
 
                     <div className="space-y-1 min-w-0 flex-1">
                       <button
@@ -911,6 +913,7 @@ export function TasksPage() {
               : prev
           );
         }}
+        onReopenAcceptance={reopenTaskAcceptance}
         onToggleSubtask={(taskId, subtaskId) => {
           handleToggleSubtask(taskId, subtaskId);
           setSelectedTask((prev) => {

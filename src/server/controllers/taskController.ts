@@ -18,6 +18,16 @@ import {
   validateSubtasks,
 } from '../utils/validators';
 
+function withAcceptanceState<T extends { dueDate: Date; acceptanceReopenedUntil?: Date | null }>(task: T) {
+  const now = Date.now();
+  return {
+    ...task,
+    acceptanceOpen:
+      task.dueDate.getTime() > now ||
+      Boolean(task.acceptanceReopenedUntil && task.acceptanceReopenedUntil.getTime() > now),
+  };
+}
+
 export class TaskController {
   // GET /api/tasks (With search, filters, sorting, and pagination)
   static async list(req: AuthenticatedRequest, res: Response, next: NextFunction) {
@@ -113,7 +123,7 @@ export class TaskController {
 
       res.json({
         success: true,
-        data: tasks,
+        data: tasks.map(withAcceptanceState),
         pagination: {
           total,
           page: pageNum,
@@ -154,7 +164,7 @@ export class TaskController {
 
       res.json({
         success: true,
-        data: task,
+        data: withAcceptanceState(task),
       });
     } catch (err) {
       next(err);
@@ -235,7 +245,7 @@ export class TaskController {
       res.status(201).json({
         success: true,
         message: 'Assignment added to queue',
-        data: newTask,
+        data: withAcceptanceState(newTask),
       });
     } catch (err) {
       next(err);
@@ -338,7 +348,7 @@ export class TaskController {
       res.json({
         success: true,
         message: 'Assignment updated successfully',
-        data: updated,
+        data: withAcceptanceState(updated),
       });
     } catch (err) {
       next(err);
@@ -348,6 +358,9 @@ export class TaskController {
   // PATCH /api/tasks/:id/complete (Dedicated 1-click status & progress toggle)
   static async toggleComplete(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
+      if (req.user!.role === 'professor') {
+        throw ApiError.forbidden('Professors manage assignment acceptance and cannot mark student work complete');
+      }
       const userId = req.user!.userId;
       const taskId = validateId(req.params.id, 'Task ID');
 
@@ -379,7 +392,37 @@ export class TaskController {
       res.json({
         success: true,
         message: isNowCompleted ? 'Assignment marked as completed' : 'Assignment reopened into progress queue',
-        data: updated,
+        data: withAcceptanceState(updated),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  // PATCH /api/tasks/:id/reopen-acceptance (Professor/Admin assignment lifecycle control)
+  static async reopenAcceptance(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      if (!['professor', 'admin'].includes(req.user!.role)) {
+        throw ApiError.forbidden('Only professors or administrators can reopen assignment acceptance');
+      }
+      const taskId = validateId(req.params.id, 'Task ID');
+      const until = validateIsoDateTime(req.body.until, 'Reopen-until date');
+      if (until.getTime() <= Date.now()) {
+        throw ApiError.badRequest('Reopen-until date must be in the future');
+      }
+      const task = await prisma.task.findUnique({ where: { id: taskId } });
+      if (!task) throw ApiError.notFound('Assignment task not found');
+      if (req.user!.role === 'professor' && task.userId !== req.user!.userId) {
+        throw ApiError.forbidden('You can reopen only assignments in your faculty load');
+      }
+      const updated = await prisma.task.update({
+        where: { id: taskId },
+        data: { acceptanceReopenedUntil: until },
+      });
+      res.json({
+        success: true,
+        message: 'Assignment acceptance reopened',
+        data: withAcceptanceState(updated),
       });
     } catch (err) {
       next(err);

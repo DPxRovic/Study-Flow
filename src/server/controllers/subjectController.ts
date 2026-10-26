@@ -15,6 +15,27 @@ import {
 } from '../utils/validators';
 
 export class SubjectController {
+  // GET /api/catalog (Active institutional courses available to all authenticated users)
+  static async catalog(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      const courses = await prisma.catalogCourse.findMany({
+        where: { active: true },
+        include: { _count: { select: { enrollments: true } } },
+        orderBy: { code: 'asc' },
+      });
+      res.json({
+        success: true,
+        data: courses.map(({ _count, ...course }: any) => ({
+          ...course,
+          name: course.title,
+          activeEnrolledCount: _count.enrollments,
+        })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
   // GET /api/subjects (Returns only subjects belonging to authenticated student)
   static async list(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
@@ -117,43 +138,55 @@ export class SubjectController {
   static async create(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
       const userId = req.user!.userId;
-      const { code, name, instructor, credits, colorKey, weeklyTargetHours, classroom, officeHours } = req.body;
+      const { catalogCourseId, colorKey, weeklyTargetHours, classroom, classSchedule, officeHours } = req.body;
+      const validCatalogCourseId = validateId(catalogCourseId, 'Catalog course ID');
+      const catalogCourse = await prisma.catalogCourse.findFirst({
+        where: { id: validCatalogCourseId, active: true },
+      });
+      if (!catalogCourse) {
+        throw ApiError.notFound('The selected institutional course is not available');
+      }
 
-      const validCode = validateString(code, 'Course Code', 2, 20).toUpperCase();
-      const validName = validateString(name, 'Course Title', 2, 100);
-      const validCredits = validateNumber(credits !== undefined ? credits : 4, 'Credits', 1, 12);
-      const validHours = validateNumber(weeklyTargetHours !== undefined ? weeklyTargetHours : 6.0, 'Weekly Target Hours', 0.5, 40);
-      const validColor = validateSubjectCategory(colorKey);
-
-      // Check for duplicate course code in the student's active schedule
       const existing = await prisma.subject.findFirst({
         where: {
           userId,
-          code: validCode,
+          catalogCourseId: validCatalogCourseId,
         },
       });
 
       if (existing) {
-        throw ApiError.conflict(`You are already enrolled in a course with code "${validCode}"`);
+        throw ApiError.conflict(`This course is already in your ${req.user!.role === 'professor' ? 'faculty load' : 'enrollment'}`);
       }
+
+      const isProfessor = req.user!.role === 'professor';
+      const validHours = weeklyTargetHours === undefined
+        ? catalogCourse.expectedWeeklyHours
+        : validateNumber(weeklyTargetHours, 'Weekly Target Hours', 0.5, 40);
+      const validColor = colorKey === undefined
+        ? validateSubjectCategory(catalogCourse.colorKey)
+        : validateSubjectCategory(colorKey);
 
       const newSubject = await prisma.subject.create({
         data: {
           userId,
-          code: validCode,
-          name: validName,
-          instructor: instructor ? validateString(instructor, 'Instructor', 1, 100) : 'Staff Faculty',
-          credits: validCredits,
+          catalogCourseId: catalogCourse.id,
+          code: catalogCourse.code,
+          name: catalogCourse.title,
+          instructor: isProfessor ? req.user!.name : catalogCourse.instructor,
+          credits: catalogCourse.credits,
           colorKey: validColor,
           weeklyTargetHours: validHours,
-          classroom: classroom ? validateString(classroom, 'Classroom', 1, 100) : null,
-          officeHours: officeHours ? validateString(officeHours, 'Office hours', 1, 150) : null,
+          classroom: isProfessor && classroom ? validateString(classroom, 'Classroom', 1, 100) : null,
+          classSchedule: isProfessor && classSchedule ? validateString(classSchedule, 'Class schedule', 1, 150) : null,
+          officeHours: isProfessor && officeHours ? validateString(officeHours, 'Office hours', 1, 150) : null,
         },
       });
 
       res.status(201).json({
         success: true,
-        message: `Enrolled in ${newSubject.code}`,
+        message: req.user!.role === 'professor'
+          ? `Added ${newSubject.code} to faculty load`
+          : `Enrolled in ${newSubject.code}`,
         data: newSubject,
       });
     } catch (err) {
@@ -179,8 +212,15 @@ export class SubjectController {
         throw ApiError.forbidden('You do not own this subject');
       }
 
-      const { code, name, instructor, credits, colorKey, weeklyTargetHours, classroom, officeHours } = req.body;
+      const { code, name, instructor, credits, colorKey, weeklyTargetHours, classroom, classSchedule, officeHours } = req.body;
       const updates: any = {};
+
+      if (req.user!.role !== 'admin' && (code !== undefined || name !== undefined || credits !== undefined)) {
+        throw ApiError.forbidden('Only administrators can change course identity or credit units');
+      }
+      if (req.user!.role === 'student' && (instructor !== undefined || classroom !== undefined || classSchedule !== undefined || officeHours !== undefined)) {
+        throw ApiError.forbidden('Students cannot change faculty or class scheduling details');
+      }
 
       if (code !== undefined) {
         const validCode = validateString(code, 'Course Code', 2, 20).toUpperCase();
@@ -217,6 +257,9 @@ export class SubjectController {
       }
       if (classroom !== undefined) {
         updates.classroom = classroom ? validateString(classroom, 'Classroom', 1, 100) : null;
+      }
+      if (classSchedule !== undefined) {
+        updates.classSchedule = classSchedule ? validateString(classSchedule, 'Class schedule', 1, 150) : null;
       }
       if (officeHours !== undefined) {
         updates.officeHours = officeHours ? validateString(officeHours, 'Office hours', 1, 150) : null;

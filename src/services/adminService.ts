@@ -147,7 +147,7 @@ export const adminService = {
     );
   },
 
-  async updateUser(userId: string, data: { role?: string; name?: string; major?: string }) {
+  async updateUser(userId: string, data: { role?: string; name?: string; major?: string; status?: 'Active' | 'Review' | 'Suspended' }) {
     return apiClient.patch<{ success: boolean; message: string; data: any }>(
       `/admin/users/${userId}`,
       data
@@ -157,7 +157,7 @@ export const adminService = {
   /**
    * Updates user status/term/major with automatic audit logging.
    */
-  async updateUserStatus(userId: string, data: { term?: string; major?: string }) {
+  async updateUserStatus(userId: string, data: { term?: string; major?: string; status?: 'Active' | 'Review' | 'Suspended' }) {
     return apiClient.patch<{ success: boolean; message: string; data: any }>(
       `/admin/users/${userId}/status`,
       data

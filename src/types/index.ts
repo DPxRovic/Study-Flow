@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type UserRole = 'student' | 'admin' | 'advisor' | 'ta';
+export type UserRole = 'student' | 'admin' | 'professor' | 'advisor' | 'ta';
 
 export type StudentView =
   | 'dashboard'
@@ -36,6 +36,7 @@ export type SubjectCategory =
 
 export interface Subject {
   id: string;
+  catalogCourseId?: string;
   code: string;               // e.g. "MATH 241"
   name: string;               // e.g. "Calculus III"
   instructor: string;         // e.g. "Dr. Elena Vance"
@@ -43,6 +44,7 @@ export interface Subject {
   colorKey: SubjectCategory;  // Category palette key
   weeklyTargetHours: number;  // Recommended weekly study hours
   classroom?: string;
+  classSchedule?: string;
   officeHours?: string;
   syllabusUrl?: string;
 }
@@ -72,6 +74,8 @@ export interface Task {
   status: TaskStatus;
   notes?: string;
   subtasks?: Array<{ id: string; title: string; completed: boolean }>;
+  acceptanceOpen?: boolean;
+  acceptanceReopenedUntil?: string;
 }
 
 export type SlotType = 'preferred_study' | 'class' | 'work' | 'personal';
@@ -184,6 +188,7 @@ export interface CatalogCourse {
   description?: string;
   syllabusOverview?: string;
   activeEnrolledCount?: number;
+  colorKey?: SubjectCategory;
 }
 
 export interface DirectoryUser {
@@ -239,6 +244,10 @@ export interface ScheduleGenerationOptions {
   maxDailyHours?: number;
   dailyStudyCapHours?: number;
   breakDurationMinutes?: number;
+  sessionLengthMinutes?: number;
+  breakMinutes?: number;
+  bufferMinutes?: number;
+  preferredStudyTime?: StudyPreferences['preferredStudyTime'];
 }
 
 export type NotificationCategory =

@@ -31,18 +31,25 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     // Check if user still exists in PostgreSQL database
     const userRecord = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, email: true, role: true, name: true },
+      select: { id: true, email: true, role: true, name: true, tokenVersion: true, accountStatus: true },
     });
 
     if (!userRecord) {
       throw ApiError.unauthorized('User account associated with token no longer exists');
     }
+    if (decoded.tokenVersion !== userRecord.tokenVersion) {
+      throw ApiError.unauthorized('Authentication token has been revoked');
+    }
+    if (userRecord.accountStatus === 'SUSPENDED') {
+      throw ApiError.forbidden('This account is suspended. Contact university support.');
+    }
 
     req.user = {
       userId: userRecord.id,
       email: userRecord.email,
-      role: userRecord.role.toLowerCase() as 'student' | 'admin' | 'advisor' | 'ta',
+      role: userRecord.role.toLowerCase() as 'student' | 'admin' | 'professor' | 'advisor' | 'ta',
       name: userRecord.name,
+      tokenVersion: userRecord.tokenVersion,
     };
     next();
   } catch (err: any) {
@@ -53,7 +60,7 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
   }
 }
 
-export function requireRole(...allowedRoles: Array<'student' | 'admin' | 'advisor' | 'ta'>) {
+export function requireRole(...allowedRoles: Array<'student' | 'admin' | 'professor' | 'advisor' | 'ta'>) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return next(ApiError.unauthorized('Authentication required'));

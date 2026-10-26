@@ -19,8 +19,10 @@ import {
   Trash2,
   Play,
   Check,
+  RotateCw,
 } from 'lucide-react';
 import { SUBJECT_CATEGORY_STYLES } from '../../theme/tokens';
+import { useAuth } from '../../context/AuthContext';
 
 interface TaskDetailModalProps {
   task: Task | null;
@@ -31,6 +33,7 @@ interface TaskDetailModalProps {
   onDelete: (taskId: string) => void;
   onToggleComplete: (taskId: string) => void;
   onToggleSubtask: (taskId: string, subtaskId: string) => void;
+  onReopenAcceptance?: (taskId: string, until: string) => void;
   onStartFocus?: (task: Task) => void;
 }
 
@@ -43,8 +46,10 @@ export function TaskDetailModal({
   onDelete,
   onToggleComplete,
   onToggleSubtask,
+  onReopenAcceptance,
   onStartFocus,
 }: TaskDetailModalProps) {
+  const { user } = useAuth();
   if (!task) return null;
 
   const isCompleted = task.status === 'completed';
@@ -194,6 +199,12 @@ export function TaskDetailModal({
           </span>
         </div>
 
+        {user?.role === 'professor' && (
+          <div className={`p-3 rounded-xl border text-xs font-semibold ${task.acceptanceOpen ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-200'}`}>
+            Assignment acceptance is {task.acceptanceOpen ? 'open' : 'closed because its deadline has passed'}.
+          </div>
+        )}
+
         {/* Syllabus Notes */}
         {task.notes && (
           <div className="space-y-1.5">
@@ -245,14 +256,33 @@ export function TaskDetailModal({
         {/* Footer Actions */}
         <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-2">
-            <Button
-              variant={isCompleted ? 'secondary' : 'primary'}
-              size="sm"
-              onClick={() => onToggleComplete(task.id)}
-              icon={<CheckCircle2 className="w-4 h-4" />}
-            >
-              {isCompleted ? 'Mark Incomplete' : 'Complete Assignment'}
-            </Button>
+            {user?.role !== 'professor' && (
+              <Button
+                variant={isCompleted ? 'secondary' : 'primary'}
+                size="sm"
+                onClick={() => onToggleComplete(task.id)}
+                icon={<CheckCircle2 className="w-4 h-4" />}
+              >
+                {isCompleted ? 'Mark Incomplete' : 'Complete Assignment'}
+              </Button>
+            )}
+
+            {user?.role === 'professor' && !task.acceptanceOpen && onReopenAcceptance && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  const until = window.prompt('Reopen acceptance until (ISO date/time, e.g. 2026-11-01T17:00:00):');
+                  if (until) {
+                    const parsed = new Date(until);
+                    if (!Number.isNaN(parsed.getTime())) onReopenAcceptance(task.id, parsed.toISOString());
+                  }
+                }}
+                icon={<RotateCw className="w-4 h-4" />}
+              >
+                Reopen Acceptance
+              </Button>
+            )}
 
             {onStartFocus && !isCompleted && (
               <Button

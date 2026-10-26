@@ -76,7 +76,7 @@ export function UsersPage() {
           role: u.role.toLowerCase() as UserRole,
           major: u.major || 'General Studies',
           enrolledCourses: u.enrolledCourses || 0,
-          status: 'Active',
+          status: u.status || 'Active',
           lastActive: 'Recently active',
           joinedDate: new Date(u.createdAt || Date.now()).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }),
         }));
@@ -141,6 +141,7 @@ export function UsersPage() {
           role,
           name: name.trim(),
           major: major.trim() || 'General Studies',
+          status,
         });
         const saved = response.data;
 
@@ -152,6 +153,7 @@ export function UsersPage() {
                   name: saved.name,
                   role: saved.role,
                   major: saved.major,
+                  status: saved.status,
                 }
               : u
           )
@@ -179,11 +181,6 @@ export function UsersPage() {
     }
 
     setIsModalOpen(false);
-  };
-
-  // Account Status Toggle Action
-  const handleToggleStatus = async (_targetUser: DirectoryUser) => {
-    showToast('Account suspension is unavailable until server-side account status is supported.', 'error');
   };
 
   // Delete User Action
@@ -219,6 +216,7 @@ export function UsersPage() {
   const studentCount = users.filter((u) => u.role === 'student').length;
   const advisorCount = users.filter((u) => u.role === 'advisor').length;
   const taCount = users.filter((u) => u.role === 'ta').length;
+  const professorCount = users.filter((u) => u.role === 'professor').length;
   const adminCount = users.filter((u) => u.role === 'admin').length;
 
   return (
@@ -286,9 +284,9 @@ export function UsersPage() {
           </div>
         </div>
         <div className="surface-base p-3.5 rounded-xl border border-slate-200/90 shadow-2xs space-y-1">
-          <div className="text-slate-500 font-medium text-[11px]">Faculty Advisors</div>
+          <div className="text-slate-500 font-medium text-[11px]">Professors & Advisors</div>
           <div className="text-xl font-extrabold font-mono text-slate-900 tabular-nums">
-            {advisorCount}
+            {professorCount + advisorCount}
           </div>
         </div>
         <div className="surface-base p-3.5 rounded-xl border border-slate-200/90 shadow-2xs space-y-1">
@@ -354,7 +352,7 @@ export function UsersPage() {
                 const roleBadge =
                   user.role === 'admin'
                     ? 'bg-amber-50 text-amber-800 border-amber-200/90'
-                    : user.role === 'advisor'
+                    : user.role === 'professor' || user.role === 'advisor'
                     ? 'bg-purple-50 text-purple-800 border-purple-200/90'
                     : user.role === 'ta'
                     ? 'bg-indigo-50 text-indigo-800 border-indigo-200/90'
@@ -478,6 +476,7 @@ export function UsersPage() {
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 bg-white font-medium text-slate-800"
               >
                 <option value="student">Student (Standard Access)</option>
+                <option value="professor">Professor / Teacher</option>
                 <option value="ta">Teaching Assistant (TA)</option>
                 <option value="advisor">Faculty Academic Advisor</option>
                 <option value="admin">Campus Administrator</option>
@@ -490,7 +489,7 @@ export function UsersPage() {
               </label>
               <select
                 value={status}
-                disabled
+                disabled={!editingUser}
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 bg-white font-medium text-slate-800"
               >
                 <option value="Active">Active</option>

@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "start": "tsx server.ts --production",
+    "dev": "prisma migrate status && tsx server.ts",
+    "start": "prisma migrate status && tsx server.ts --production",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -14,6 +14,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:validate": "prisma validate",
+    "db:ready": "prisma validate && prisma migrate status",
     "test:backend": "tsx src/server/tests/backend.test.ts",
     "test:integration": "tsx src/server/tests/integration.test.ts",
     "test:reset": "tsx src/server/tests/persistence_audit_reset.test.ts",

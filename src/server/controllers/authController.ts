@@ -82,9 +82,10 @@ export class AuthController {
         email: newUser.email,
         role: newUser.role.toLowerCase() as any,
         name: newUser.name,
+        tokenVersion: newUser.tokenVersion,
       });
 
-      const { passwordHash: _, ...safeUser } = newUser;
+      const { passwordHash: _, tokenVersion: __, ...safeUser } = newUser;
 
       res.status(201).json({
         success: true,
@@ -134,6 +135,9 @@ export class AuthController {
         });
         throw ApiError.unauthorized('Invalid email or password');
       }
+      if (user.accountStatus === 'SUSPENDED') {
+        throw ApiError.forbidden('This account is suspended. Contact university support.');
+      }
 
       // Record successful login audit event
       await logSecurityEvent({
@@ -151,9 +155,10 @@ export class AuthController {
         email: user.email,
         role: user.role.toLowerCase() as any,
         name: user.name,
+        tokenVersion: user.tokenVersion,
       });
 
-      const { passwordHash: _, ...safeUser } = user;
+      const { passwordHash: _, tokenVersion: __, ...safeUser } = user;
 
       res.json({
         success: true,
@@ -180,7 +185,7 @@ export class AuthController {
         throw ApiError.notFound('User account not found');
       }
 
-      const { passwordHash: _, ...safeUser } = user;
+      const { passwordHash: _, tokenVersion: __, ...safeUser } = user;
 
       res.json({
         success: true,
@@ -218,7 +223,7 @@ export class AuthController {
         data: updates,
       });
 
-      const { passwordHash: _, ...safeUser } = updatedUser;
+      const { passwordHash: _, tokenVersion: __, ...safeUser } = updatedUser;
 
       res.json({
         success: true,
@@ -231,11 +236,22 @@ export class AuthController {
   }
 
   // POST /api/auth/logout
-  static async logout(req: AuthenticatedRequest, res: Response) {
-    res.json({
-      success: true,
-      message: 'Logged out successfully',
-    });
+  static async logout(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        throw ApiError.unauthorized();
+      }
+      await prisma.user.update({
+        where: { id: req.user.userId },
+        data: { tokenVersion: { increment: 1 } },
+      });
+      res.json({
+        success: true,
+        message: 'Logged out successfully',
+      });
+    } catch (err) {
+      next(err);
+    }
   }
 
   // =========================================================================
@@ -593,7 +609,7 @@ export class AuthController {
       await prisma.$transaction(async (tx) => {
         await tx.user.update({
           where: { id: user.id },
-          data: { passwordHash: newPasswordHash },
+          data: { passwordHash: newPasswordHash, tokenVersion: { increment: 1 } },
         });
 
         await tx.passwordResetRequest.update({
