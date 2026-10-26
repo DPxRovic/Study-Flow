@@ -42,6 +42,35 @@ export function ForgotPasswordPage() {
   const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(null);
   const [devCode, setDevCode] = useState<string | null>(null);
 
+  // Sanitizes error messages so raw HTML from proxies/gateways or internal tokens never leak into UI
+  const sanitizeErrorMessage = (msg: any): string => {
+    if (!msg) return 'Email delivery service is temporarily unavailable. Please try again later.';
+    const text = typeof msg === 'string' ? msg.trim() : String(msg?.message || msg).trim();
+
+    if (
+      text.startsWith('<') ||
+      /<[a-z][\s\S]*>/i.test(text) ||
+      text.includes('<!DOCTYPE') ||
+      text.includes('Starting Server')
+    ) {
+      return 'The application server is warming up or temporarily unreachable. Please retry in a few moments.';
+    }
+
+    if (
+      text.includes('534') ||
+      text.includes('Application-specific password required') ||
+      text.includes('InvalidSecondFactor')
+    ) {
+      return 'Gmail SMTP authentication error: Google requires a 16-character App Password (not your personal account password). Please check server environment configuration.';
+    }
+
+    if (text.includes('ETIMEDOUT') || text.includes('Connection timeout') || text.includes('ESOCKET')) {
+      return 'Connection to the email server timed out. Please retry in a few moments.';
+    }
+
+    return text;
+  };
+
   // Field validation
   const validateEmail = (val: string) => {
     if (!val.trim()) return 'University email is required.';
@@ -94,11 +123,11 @@ export function ForgotPasswordPage() {
           showToast('Verification code requested! Please check your university inbox.', 'info');
         }
       } else {
-        setErrorMessage(res.message || 'Unable to request verification code. Please try again.');
+        setErrorMessage(sanitizeErrorMessage(res.message || 'Unable to request verification code. Please try again.'));
       }
     } catch (err: any) {
       setErrorMessage(
-        err.message || 'Email delivery service is temporarily unavailable. Please try again later.'
+        sanitizeErrorMessage(err.message || 'Email delivery service is temporarily unavailable. Please try again later.')
       );
     } finally {
       setLoading(false);
@@ -124,10 +153,10 @@ export function ForgotPasswordPage() {
         setStep('NEW_PASSWORD');
         showToast('Code verified! Choose your new secure password.', 'success');
       } else {
-        setErrorMessage(res.message || 'Invalid or expired verification code.');
+        setErrorMessage(sanitizeErrorMessage(res.message || 'Invalid or expired verification code.'));
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Invalid verification code.');
+      setErrorMessage(sanitizeErrorMessage(err.message || 'Invalid verification code.'));
       if (err.message && err.message.includes('attempt')) {
         const match = err.message.match(/(\d+)\s+attempt/);
         if (match) setAttemptsRemaining(parseInt(match[1], 10));
@@ -166,10 +195,10 @@ export function ForgotPasswordPage() {
         setStep('SUCCESS');
         showToast('Password updated! You can now sign in.', 'success');
       } else {
-        setErrorMessage(res.message || 'Could not reset password. Please retry.');
+        setErrorMessage(sanitizeErrorMessage(res.message || 'Could not reset password. Please retry.'));
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to update password. Please request a new code.');
+      setErrorMessage(sanitizeErrorMessage(err.message || 'Failed to update password. Please request a new code.'));
     } finally {
       setLoading(false);
     }

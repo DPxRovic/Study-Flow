@@ -328,9 +328,9 @@ export class AuthController {
         `[ForgotPassword] [T2] Reset code generated and persisted in ${(tPersistEnd - tPersistStart).toFixed(1)}ms`
       );
 
-      // Send the code through Resend email service using published template
-      const tResendStart = performance.now();
-      console.log(`[ForgotPassword] [T3] Resend API request started (template: password-reset)`);
+      // Send the code through Gmail SMTP email service
+      const tEmailStart = performance.now();
+      console.log(`[ForgotPassword] [T3] SMTP email dispatch started`);
 
       const emailResult = await emailService.sendPasswordResetCode({
         to: user.email,
@@ -338,9 +338,9 @@ export class AuthController {
         code: numericCode,
       });
 
-      const tResendEnd = performance.now();
+      const tEmailEnd = performance.now();
       console.log(
-        `[ForgotPassword] [T4] Resend API request finished in ${(tResendEnd - tResendStart).toFixed(1)}ms (Success: ${emailResult.success}, ProviderId: ${emailResult.messageId || 'none'})`
+        `[ForgotPassword] [T4] SMTP dispatch finished in ${(tEmailEnd - tEmailStart).toFixed(1)}ms (Success: ${emailResult.success}, ProviderId: ${emailResult.messageId || 'none'})`
       );
 
       if (!emailResult.success) {
@@ -380,7 +380,7 @@ export class AuthController {
           console.log(`6-Digit Code:  ${numericCode}`);
           console.log(`Expires:       in 10 minutes`);
           console.log(`Database:      Persisted as HMAC-SHA256 in PostgreSQL`);
-          console.log(`Resend Notice: Real email delivery was not performed (${emailResult.error})`);
+          console.log(`SMTP Notice:   Real email delivery was not performed (${emailResult.error})`);
           console.log('========================================================================\n');
 
           const responsePayload: {
@@ -415,6 +415,17 @@ export class AuthController {
         console.warn(
           `[ForgotPassword] Email delivery restricted by provider (status ${emailResult.statusCode || 403}): ${emailResult.error}`
         );
+
+        const isGoogleAppPasswordRequired =
+          Boolean(emailResult.error?.includes('534')) ||
+          Boolean(emailResult.error?.includes('Application-specific password required')) ||
+          Boolean(emailResult.error?.includes('InvalidSecondFactor'));
+
+        if (isGoogleAppPasswordRequired && process.env.NODE_ENV !== 'production') {
+          throw ApiError.badRequest(
+            'Gmail SMTP requires a 16-character Google App Password for GMAIL_APP_PASSWORD (myaccount.google.com/apppasswords). Standard Google account passwords cannot be used directly with SMTP.'
+          );
+        }
 
         // User-friendly error that preserves anti-enumeration and protects private Resend sandbox details
         throw ApiError.serviceUnavailable(

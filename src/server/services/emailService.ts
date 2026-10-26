@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
+import type { Transporter } from 'nodemailer';
+import { config } from '../config';
 
 export interface SendPasswordResetCodeParams {
   to: string;
@@ -17,8 +19,6 @@ export interface EmailServiceResult {
   messageId?: string;
   error?: string;
   statusCode?: number;
-  isSandboxRestriction?: boolean;
-  sandboxAllowedRecipient?: string;
   simulated?: boolean;
 }
 
@@ -26,10 +26,14 @@ export interface EmailServiceResult {
 const testDeliveredCodes = new Map<string, { code: string; timestamp: number }>();
 let lastSendPayload: any = null;
 
+// Mock transporter override for unit/integration tests
+let mockTransporter: Transporter | null = null;
+
 /**
- * Builds the production-ready responsive HTML template for StudyFlow password reset verification
+ * Builds the production-ready responsive HTML template for StudyFlow password reset verification.
+ * Retains complete StudyFlow branding, academic security badge, 6-digit code box, expiration instructions, and security notice.
  */
-function renderPasswordResetHtml(params: { name: string; code: string; expirationMinutes: number }): string {
+export function renderPasswordResetHtml(params: { name: string; code: string; expirationMinutes: number }): string {
   const { name, code, expirationMinutes } = params;
 
   return `<!DOCTYPE html>
@@ -221,7 +225,7 @@ function renderPasswordResetHtml(params: { name: string; code: string; expiratio
 /**
  * Builds the plain-text fallback representation of the password reset email
  */
-function renderPasswordResetText(params: { name: string; code: string; expirationMinutes: number }): string {
+export function renderPasswordResetText(params: { name: string; code: string; expirationMinutes: number }): string {
   const { name, code, expirationMinutes } = params;
 
   return `StudyFlow Academic Planner — Password Reset Request
@@ -248,39 +252,74 @@ If you did not request this password reset, please disregard this email. Your ac
 
 export const emailService = {
   /**
-   * Formats and validates the RFC 5322 'from' address
+   * Retrieves the configured Gmail/SMTP sender credentials without leaking them to client responses or logs
    */
-  getFormattedFromAddress(): string {
-    const rawFrom = process.env.RESEND_FROM_EMAIL?.trim() || 'onboarding@resend.dev';
-    if (rawFrom.includes('<') && rawFrom.includes('>')) {
-      return rawFrom;
-    }
-    return `StudyFlow Security <${rawFrom}>`;
+  getSmtpCredentials(): { user: string; pass: string; fromName: string } {
+    const rawUser = process.env.GMAIL_USER ?? process.env.SMTP_USER ?? config.gmailUser ?? '';
+    const rawPass = process.env.GMAIL_APP_PASSWORD ?? process.env.SMTP_PASS ?? config.gmailAppPassword ?? '';
+    const rawFromName = process.env.SMTP_FROM_NAME ?? config.smtpFromName ?? 'StudyFlow Academic Planner';
+
+    const user = rawUser.trim();
+    // Sanitize app password: strip all spaces because Google generates app passwords in 4-character chunks: "xxxx xxxx xxxx xxxx"
+    const pass = rawPass.trim().replace(/\s+/g, '');
+    const fromName = rawFromName.trim();
+
+    return { user, pass, fromName };
   },
 
   /**
-   * Sends a 6-digit verification code to the user's registered account email via Resend.
+   * Formats the RFC 5322 'from' address using the authenticated Gmail address and configured display name.
+   * Prevents arbitrary sender spoofing by using the authenticated account.
+   */
+  getFormattedFromAddress(): string {
+    const { user, fromName } = this.getSmtpCredentials();
+    const safeUser = user || 'no-reply@studyflow.internal';
+    return `"${fromName}" <${safeUser}>`;
+  },
+
+  /**
+   * Creates a Nodemailer transporter configured for Gmail SMTP (smtp.gmail.com:465 SSL).
+   * Strictly enforces TLS certificate verification (rejectUnauthorized: true).
+   */
+  createTransporter(): Transporter {
+    if (mockTransporter) {
+      return mockTransporter;
+    }
+
+    const { user, pass } = this.getSmtpCredentials();
+
+    return nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true, // Port 465 uses SSL/TLS directly
+      auth: {
+        user,
+        pass,
+      },
+      tls: {
+        rejectUnauthorized: true, // Never disable TLS certificate verification
+      },
+      connectionTimeout: 4000,
+      greetingTimeout: 4000,
+      socketTimeout: 5000,
+    });
+  },
+
+  /**
+   * Allows injecting a custom or mock transporter for automated unit and integration tests.
+   */
+  setMockTransporter(transporter: Transporter | null): void {
+    mockTransporter = transporter;
+  },
+
+  /**
+   * Sends a 6-digit verification code to the user's registered account email via Gmail SMTP.
+   * Dispatches both rich HTML and plain-text templates to ensure universal client compatibility.
    */
   async sendPasswordResetCode(params: SendPasswordResetCodeParams): Promise<EmailServiceResult> {
     const { to, name, code, expirationMinutes = 10 } = params;
-    const apiKey = process.env.RESEND_API_KEY?.trim();
+    const { user, pass } = this.getSmtpCredentials();
     const fromAddress = this.getFormattedFromAddress();
-
-    // Build official Resend SDK template-send payload
-    // Mutually exclusive: strictly omits html, text, and react when template is specified
-    const templateId = process.env.RESEND_TEMPLATE_ID?.trim() || 'password-reset';
-    const sendPayload: any = {
-      from: fromAddress,
-      to: [to],
-      subject: `Your StudyFlow password reset code: ${code}`,
-      template: {
-        id: templateId,
-        variables: {
-          RESET_CODE: code,
-          EXPIRY_MINUTES: expirationMinutes,
-        },
-      },
-    };
 
     // Store in test storage strictly for automated unit tests in test/dev environments
     if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development') {
@@ -288,121 +327,155 @@ export const emailService = {
         code,
         timestamp: Date.now(),
       });
-      lastSendPayload = JSON.parse(JSON.stringify(sendPayload));
+      lastSendPayload = {
+        from: fromAddress,
+        to,
+        code,
+        expirationMinutes,
+      };
     }
 
-    // In automated unit tests, allow controlled simulation of provider responses
-    if (process.env.NODE_ENV === 'test' && process.env.TEST_REAL_RESEND !== 'true') {
-      if (process.env.SIMULATE_RESEND_ERROR === '403_SANDBOX') {
+    // Controlled simulation of provider responses for automated unit tests without outbound network
+    if (
+      (process.env.NODE_ENV === 'test' ||
+        process.env.SIMULATE_SMTP_AUTH_ERROR === 'true' ||
+        process.env.SIMULATE_SMTP_NETWORK_ERROR === 'true') &&
+      process.env.TEST_REAL_SMTP !== 'true'
+    ) {
+      if (process.env.SIMULATE_SMTP_AUTH_ERROR === 'true') {
         return {
           success: false,
-          statusCode: 403,
-          isSandboxRestriction: true,
-          error: 'You can only send testing emails to your own email address (sandbox@resend.dev). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain.',
+          statusCode: 401,
+          error: 'Invalid login: 535-5.7.8 Username and Password not accepted. Learn more at https://support.google.com/mail/?p=BadCredentials',
         };
       }
-      if (process.env.SIMULATE_RESEND_ERROR === 'NETWORK_ERROR') {
+      if (process.env.SIMULATE_SMTP_NETWORK_ERROR === 'true') {
         return {
           success: false,
           statusCode: 503,
-          error: 'Provider network timeout or connection reset.',
+          error: 'Connection timeout while connecting to smtp.gmail.com:465',
         };
       }
-      return {
-        success: true,
-        simulated: true,
-        messageId: `sim_test_${Date.now()}`,
-      };
+      // If mock transporter was explicitly injected, allow it to execute
+      if (!mockTransporter) {
+        return {
+          success: true,
+          simulated: true,
+          messageId: `smtp_sim_${Date.now()}`,
+        };
+      }
     }
 
-    // 1. Validate API Key configuration
-    if (!apiKey) {
+    // 1. Validate required SMTP configuration at runtime boundary
+    if (!user || !pass) {
       console.warn(
-        '[EmailService] RESEND_API_KEY is not configured in server environment. Real email dispatch cannot proceed.'
+        '[EmailService] Gmail SMTP credentials are not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD in environment.'
       );
       return {
         success: false,
-        error: 'Email delivery service is not configured. Missing RESEND_API_KEY.',
+        error: 'Email delivery service is not configured. Missing GMAIL_USER or GMAIL_APP_PASSWORD.',
       };
     }
 
-    // 3. Dispatch through official Resend SDK with responsive AbortController timeout (5000ms)
-    // Safely intercept Resend SDK's internal console.error logger to convert provider 403/validation rejections
-    // into standard diagnostic warnings, preventing false unhandled exception alerts in server watchers.
-    const originalConsoleError = console.error;
-    console.error = (...args: any[]) => {
-      if (typeof args[0] === 'string' && args[0].includes('[Resend API Error]')) {
-        console.warn('[EmailService Diagnostic] Provider rejection handled safely:', args[1]?.error?.message || args[1] || args[0]);
-        return;
-      }
-      originalConsoleError.apply(console, args);
-    };
+    // 2. Render templates
+    const html = renderPasswordResetHtml({ name, code, expirationMinutes });
+    const text = renderPasswordResetText({ name, code, expirationMinutes });
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-    }, 5000);
-
+    // 3. Dispatch email through Nodemailer with bounded timeout race
     try {
-      const resend = new Resend(apiKey);
+      const transporter = this.createTransporter();
 
-      const { data, error } = await resend.emails.send(sendPayload, {
-        signal: controller.signal,
+      const sendPromise = transporter.sendMail({
+        from: fromAddress,
+        to,
+        subject: `Your StudyFlow password reset code: ${code}`,
+        text,
+        html,
       });
-      clearTimeout(timeoutId);
 
-      if (error) {
-        const statusCode = (error as any).statusCode || (error as any).status || 403;
-        const errorMessage = error.message || 'Email delivery failed with provider error.';
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('SMTP dispatch timed out after 5000ms while connecting to smtp.gmail.com:465')),
+          5000
+        )
+      );
 
-        // Detect Resend Testing Sandbox restriction
-        const isSandboxRestriction = Boolean(
-          errorMessage.includes('You can only send testing emails to your own email address') ||
-          errorMessage.includes('testing emails to your own email address') ||
-          errorMessage.includes('verify a domain at resend.com/domains')
-        );
+      const info = await Promise.race([sendPromise, timeoutPromise]);
 
-        let sandboxAllowedRecipient: string | undefined;
-        if (isSandboxRestriction) {
-          const match = errorMessage.match(/own email address \(([^)]+)\)/);
-          if (match && match[1]) {
-            sandboxAllowedRecipient = match[1];
-          }
-          console.warn(
-            `[EmailService] Resend Sandbox Restriction (HTTP ${statusCode}): Sender (${fromAddress}) cannot deliver to external recipients in sandbox mode. Verify domain at resend.com/domains and set RESEND_FROM_EMAIL.`
-          );
-        } else {
-          console.warn(`[EmailService] Resend API rejected message dispatch (Status ${statusCode}): ${errorMessage}`);
-        }
+      console.log(`[EmailService] Password reset email dispatched via Gmail SMTP to: ${to}`);
 
-        return {
-          success: false,
-          error: errorMessage,
-          statusCode,
-          isSandboxRestriction,
-          sandboxAllowedRecipient,
-        };
-      }
-
-      // Confirmed provider acceptance (Resend assigned a message ID)
       return {
         success: true,
-        messageId: data?.id,
+        messageId: info.messageId,
       };
     } catch (err: any) {
-      clearTimeout(timeoutId);
-      const isAbort = err?.name === 'AbortError' || err?.message?.toLowerCase().includes('abort');
-      const errorMessage = isAbort
-        ? 'Resend API dispatch timed out after 5000ms.'
-        : err?.message || 'Unexpected failure while sending reset email.';
-      console.warn('[EmailService] Dispatch error:', errorMessage);
+      const errorMessage = err?.message || 'Unknown SMTP error during message transmission';
+      const isAuthError =
+        errorMessage.includes('535') ||
+        errorMessage.includes('534') ||
+        errorMessage.includes('5.7.9') ||
+        errorMessage.includes('5.7.8') ||
+        errorMessage.includes('Application-specific password required') ||
+        errorMessage.includes('InvalidSecondFactor') ||
+        errorMessage.includes('BadCredentials') ||
+        errorMessage.includes('Username and Password not accepted') ||
+        errorMessage.includes('EAUTH');
+
+      const isConnectionError =
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('ESOCKET') ||
+        errorMessage.includes('ECONNREFUSED') ||
+        errorMessage.includes('ECONNRESET');
+
+      const statusCode = isAuthError ? 401 : isConnectionError ? 503 : 500;
+
+      // Provide actionable diagnostic if Google rejects standard account password
+      if (
+        errorMessage.includes('534') ||
+        errorMessage.includes('Application-specific password required') ||
+        errorMessage.includes('InvalidSecondFactor')
+      ) {
+        console.warn(
+          `[EmailService] Gmail SMTP authentication failed (status 401): Google requires a 16-character App Password for GMAIL_APP_PASSWORD. ` +
+          `Standard Google account passwords are not accepted. Generate one at https://myaccount.google.com/apppasswords`
+        );
+      } else {
+        // Log clean diagnostic without exposing passwords, codes, or secrets
+        console.warn(`[EmailService] Gmail SMTP dispatch failed (status ${statusCode}):`, errorMessage);
+      }
+
       return {
         success: false,
-        statusCode: 503,
+        statusCode,
         error: errorMessage,
       };
-    } finally {
-      console.error = originalConsoleError;
+    }
+  },
+
+  /**
+   * Helper to verify Gmail SMTP connection and credentials at server startup or on health checks
+   */
+  async verifySmtpConnection(): Promise<{ ok: boolean; message: string }> {
+    const { user, pass } = this.getSmtpCredentials();
+    if (!user || !pass) {
+      return {
+        ok: false,
+        message: 'Gmail SMTP credentials are not set (GMAIL_USER or GMAIL_APP_PASSWORD missing).',
+      };
+    }
+
+    try {
+      const transporter = this.createTransporter();
+      await transporter.verify();
+      return {
+        ok: true,
+        message: 'Gmail SMTP connection verified successfully.',
+      };
+    } catch (err: any) {
+      return {
+        ok: false,
+        message: `Gmail SMTP verification failed: ${err?.message || err}`,
+      };
     }
   },
 

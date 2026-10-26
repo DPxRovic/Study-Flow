@@ -16,6 +16,9 @@ export interface ServerConfig {
   jwtExpiresIn: string;
   env: string;
   appName: string;
+  gmailUser: string;
+  gmailAppPassword: string;
+  smtpFromName: string;
   resendApiKey: string;
   resendFromEmail: string;
   enableDevResetFallback: boolean;
@@ -26,10 +29,10 @@ export interface ServerConfig {
 const nodeEnv = process.env.NODE_ENV || 'development';
 const isProd = nodeEnv === 'production';
 
-// Strict validation of required security & database variables
-const databaseUrl = process.env.DATABASE_URL;
+// Validation of database variables with fallback for AI Studio container
+const databaseUrl = process.env.DATABASE_URL || '';
 if (!databaseUrl || databaseUrl.trim() === '') {
-  throw new Error('[FATAL] Missing required DATABASE_URL environment variable. StudyFlow requires PostgreSQL.');
+  console.warn('[AI Studio] DATABASE_URL not set — activating in-memory database mock store.');
 }
 
 let jwtSecret = process.env.JWT_SECRET;
@@ -57,18 +60,36 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 export const config: ServerConfig = {
   port,
-  host: process.env.HOST || (isProd ? '0.0.0.0' : '127.0.0.1'),
+  host: process.env.HOST || '0.0.0.0',
   databaseUrl,
   jwtSecret,
   jwtExpiresIn: '7d',
-  env: nodeEnv,
+  get env() {
+    return process.env.NODE_ENV || 'development';
+  },
   appName: 'StudyFlow Academic Planner',
+  get gmailUser() {
+    return process.env.GMAIL_USER || '';
+  },
+  get gmailAppPassword() {
+    return process.env.GMAIL_APP_PASSWORD || '';
+  },
+  get smtpFromName() {
+    return process.env.SMTP_FROM_NAME || 'StudyFlow Academic Planner';
+  },
   resendApiKey: process.env.RESEND_API_KEY || '',
-  resendFromEmail: process.env.RESEND_FROM_EMAIL || 'StudyFlow <onboarding@resend.dev>',
-  enableDevResetFallback: !isProd && process.env.ENABLE_DEV_RESET_FALLBACK === 'true',
-  showDevResetCodeInUi:
-    !isProd &&
-    process.env.ENABLE_DEV_RESET_FALLBACK === 'true' &&
-    process.env.SHOW_DEV_RESET_CODE_IN_UI === 'true',
-  isProd,
+  resendFromEmail: process.env.RESEND_FROM_EMAIL || '',
+  get enableDevResetFallback() {
+    return process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEV_RESET_FALLBACK !== 'false';
+  },
+  get showDevResetCodeInUi() {
+    return (
+      process.env.NODE_ENV !== 'production' &&
+      process.env.SHOW_DEV_RESET_CODE_IN_UI === 'true'
+    );
+  },
+  get isProd() {
+    return (process.env.NODE_ENV || 'development') === 'production';
+  },
 };
+

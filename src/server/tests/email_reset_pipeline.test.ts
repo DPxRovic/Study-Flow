@@ -15,11 +15,17 @@ import { securityHeaders, corsMiddleware } from '../middleware/security';
 import { prisma } from '../db/prisma';
 import { apiClient, ApiClientError } from '../../services/apiClient';
 import { authService } from '../../services/authService';
-import { emailService, getTestDeliveredCode, getLastSendPayload } from '../services/emailService';
+import {
+  emailService,
+  getTestDeliveredCode,
+  getLastSendPayload,
+  renderPasswordResetHtml,
+  renderPasswordResetText,
+} from '../services/emailService';
 
 async function runEmailResetPipelineSuite() {
   console.log('========================================================================');
-  console.log('   STUDYFLOW RESEND EMAIL DELIVERY & PASSWORD RESET VERIFICATION SUITE   ');
+  console.log('   STUDYFLOW GMAIL SMTP EMAIL DELIVERY & RESET VERIFICATION SUITE       ');
   console.log('========================================================================\n');
 
   let passed = 0;
@@ -54,45 +60,68 @@ async function runEmailResetPipelineSuite() {
   console.log(`[TEST SERVER] Running on ephemeral port ${port} (Base: ${baseUrl})\n`);
 
   const uniqueSuffix = Date.now().toString(36);
-  const testAccountEmail = `intended_recipient_${uniqueSuffix}@university.edu`;
+  const testAccountEmail = `professor_evaluator_${uniqueSuffix}@gmail.com`;
   const initialPassword = 'InitialSecretPass2026!';
   const updatedPassword = 'NewSecretPass2026!';
   let testUserId = '';
 
   try {
     // -----------------------------------------------------------------
-    // TEST 1: Registered Account Lookup & Recipient Fidelity
+    // TEST 1: Registered Account Lookup & Arbitrary Recipient Fidelity
     // -----------------------------------------------------------------
     console.log('--- 1. INTENDED RECIPIENT & ACCOUNT LOOKUP ---');
     const registerRes = await authService.register({
       email: testAccountEmail,
       password: initialPassword,
-      name: 'Intended Student User',
-      major: 'Cognitive Science',
+      name: 'Prof. Evaluator',
+      major: 'Computer Science Faculty',
     });
 
     testUserId = registerRes.user.id;
-    assert(registerRes.user.email === testAccountEmail, 'Registered account stored in database with exact intended email');
+    assert(registerRes.user.email === testAccountEmail, 'Registered account stored with arbitrary recipient email');
 
     // -----------------------------------------------------------------
-    // TEST 2: Email Service Recipient and Sender Formatting
+    // TEST 2: Sender Address & Display Name Formatting
     // -----------------------------------------------------------------
     console.log('\n--- 2. SENDER FORMATTING & EMAIL TEMPLATE INTEGRITY ---');
     const fromAddress = emailService.getFormattedFromAddress();
     assert(
-      fromAddress.includes('StudyFlow Security') || fromAddress.includes('@'),
-      'Sender address is valid RFC 5322 formatted address',
+      fromAddress.includes('StudyFlow Academic Planner') || fromAddress.includes('@'),
+      'Sender address is valid RFC 5322 formatted address with display name',
       fromAddress
     );
 
     // -----------------------------------------------------------------
-    // TEST 3: Resend Published Template Send & Variable Verification
+    // TEST 3: HTML & Plain-Text Template Rendering
     // -----------------------------------------------------------------
-    console.log('\n--- 3. RESEND TEMPLATE & VARIABLE INTEGRITY ---');
+    console.log('\n--- 3. EMAIL TEMPLATE INTEGRITY (HTML & TEXT) ---');
+    const sampleCode = '839201';
+    const sampleHtml = renderPasswordResetHtml({
+      name: 'Prof. Evaluator',
+      code: sampleCode,
+      expirationMinutes: 10,
+    });
+    const sampleText = renderPasswordResetText({
+      name: 'Prof. Evaluator',
+      code: sampleCode,
+      expirationMinutes: 10,
+    });
+
+    assert(sampleHtml.includes(sampleCode), 'HTML template contains 6-digit verification code');
+    assert(sampleHtml.includes('StudyFlow Academic Planner'), 'HTML template includes StudyFlow branding');
+    assert(sampleHtml.includes('Academic Security'), 'HTML template includes security badge');
+    assert(sampleHtml.includes('10 minutes'), 'HTML template specifies expiration duration');
+    assert(sampleText.includes(sampleCode), 'Plain-text template contains 6-digit verification code');
+    assert(sampleText.includes('expires in 10 minutes'), 'Plain-text template specifies expiration instructions');
+
+    // -----------------------------------------------------------------
+    // TEST 4: Dispatch via Mocked Transport & Payload Capture
+    // -----------------------------------------------------------------
+    console.log('\n--- 4. DISPATCH CAPTURE & RECIPIENT FIDELITY ---');
     const testCode = '742918';
     const emailResult = await emailService.sendPasswordResetCode({
       to: testAccountEmail,
-      name: 'Intended Student User',
+      name: 'Prof. Evaluator',
       code: testCode,
       expirationMinutes: 10,
     });
@@ -102,20 +131,15 @@ async function runEmailResetPipelineSuite() {
     assert(deliveredCode === testCode, 'Correct 6-digit code was dispatched to intended recipient');
 
     const lastPayload = getLastSendPayload();
-    assert(Boolean(lastPayload), 'Last Resend dispatch payload was captured');
-    assert(lastPayload?.template?.id === 'password-reset', 'Send payload references published template alias "password-reset"');
-    assert(lastPayload?.template?.variables?.RESET_CODE === testCode, 'Template variables supply exact RESET_CODE value');
-    assert(lastPayload?.template?.variables?.EXPIRY_MINUTES === 10, 'Template variables supply exact EXPIRY_MINUTES value');
-    assert(
-      !lastPayload?.html && !lastPayload?.text && !lastPayload?.react,
-      'Mutually exclusive: send payload omits html/text/react when template is specified'
-    );
-    assert(Array.isArray(lastPayload?.to) && lastPayload?.to[0] === testAccountEmail, 'Recipient email preserved in send payload');
+    assert(Boolean(lastPayload), 'Last dispatch payload was captured');
+    assert(lastPayload?.code === testCode, 'Dispatch payload supplies exact code');
+    assert(lastPayload?.expirationMinutes === 10, 'Dispatch payload supplies exact expiration minutes');
+    assert(lastPayload?.to === testAccountEmail, 'Recipient email matches professor Gmail address');
 
     // -----------------------------------------------------------------
-    // TEST 4: Forgot Password API Endpoint Response Never Leaks Verification Code
+    // TEST 5: API Response Never Leaks Verification Code
     // -----------------------------------------------------------------
-    console.log('\n--- 4. API RESPONSE SECURITY & ZERO CODE EXPOSURE ---');
+    console.log('\n--- 5. API RESPONSE SECURITY & ZERO CODE EXPOSURE ---');
     apiClient.clearToken();
     const forgotRes = await authService.forgotPassword(testAccountEmail);
     assert(forgotRes.success === true, 'Forgot-password request returns successful generic acknowledgement');
@@ -133,9 +157,9 @@ async function runEmailResetPipelineSuite() {
     assert(dbRecord?.codeHash !== testCode, 'Verification code is stored as HMAC hash, never in plaintext');
 
     // -----------------------------------------------------------------
-    // TEST 5: Code Verification Endpoint Issues Single-Use Reset Token
+    // TEST 6: Code Verification Endpoint Issues Single-Use Reset Token
     // -----------------------------------------------------------------
-    console.log('\n--- 5. CODE VERIFICATION & RESET TOKEN ISSUANCE ---');
+    console.log('\n--- 6. CODE VERIFICATION & RESET TOKEN ISSUANCE ---');
     const activeDeliveredCode = getTestDeliveredCode(testAccountEmail);
     assert(Boolean(activeDeliveredCode), 'Active verification code was dispatched for user');
 
@@ -160,9 +184,9 @@ async function runEmailResetPipelineSuite() {
     );
 
     // -----------------------------------------------------------------
-    // TEST 6: Atomic Password Reset & Single-Use Enforcement
+    // TEST 7: Atomic Password Reset & Single-Use Enforcement
     // -----------------------------------------------------------------
-    console.log('\n--- 6. PASSWORD RESET & CREDENTIAL UPDATE ---');
+    console.log('\n--- 7. PASSWORD RESET & CREDENTIAL UPDATE ---');
     const resetRes = await authService.resetPassword(testAccountEmail, verifyRes.resetToken!, updatedPassword);
     assert(resetRes.success === true, 'Password reset completes successfully');
 
@@ -178,9 +202,9 @@ async function runEmailResetPipelineSuite() {
     assert(reuseRejected, 'Reset authorization token cannot be reused');
 
     // -----------------------------------------------------------------
-    // TEST 7: Authentication with Updated vs Old Credentials
+    // TEST 8: Authentication with Updated vs Old Credentials
     // -----------------------------------------------------------------
-    console.log('\n--- 7. AUTHENTICATION INTEGRITY ---');
+    console.log('\n--- 8. AUTHENTICATION INTEGRITY ---');
     let oldPassFailed = false;
     try {
       await authService.login(testAccountEmail, initialPassword);
@@ -196,41 +220,41 @@ async function runEmailResetPipelineSuite() {
     assert(newLoginRes.user.email === testAccountEmail, 'Authenticated user profile matches intended account');
 
     // -----------------------------------------------------------------
-    // TEST 8: Anti-Enumeration for Non-Existent Accounts
+    // TEST 9: Anti-Enumeration for Non-Existent Accounts
     // -----------------------------------------------------------------
-    console.log('\n--- 8. PRIVACY & ANTI-ENUMERATION GUARANTEE ---');
+    console.log('\n--- 9. PRIVACY & ANTI-ENUMERATION GUARANTEE ---');
     const ghostRes = await authService.forgotPassword('non_existent_ghost_user@university.edu');
     assert(ghostRes.success === true, 'Non-existent email returns identical generic response (Anti-enumeration)');
 
     // -----------------------------------------------------------------
-    // TEST 9: Resend HTTP 403 Sandbox Rejection Handling (Server Stays Alive)
+    // TEST 10: SMTP Authentication Error Handling (535 Bad Credentials)
     // -----------------------------------------------------------------
-    console.log('\n--- 9. RESEND HTTP 403 SANDBOX REJECTION & 503 HANDLING ---');
-    process.env.SIMULATE_RESEND_ERROR = '403_SANDBOX';
+    console.log('\n--- 10. SMTP AUTHENTICATION ERROR RESILIENCE ---');
+    process.env.SIMULATE_SMTP_AUTH_ERROR = 'true';
     process.env.ENABLE_DEV_RESET_FALLBACK = 'false';
 
-    let sandboxRejectedWith503 = false;
-    let sandboxErrorMessage = '';
+    let authRejectedWith503 = false;
+    let authErrorMessage = '';
     try {
       await authService.forgotPassword(testAccountEmail);
     } catch (err: any) {
       if (err instanceof ApiClientError && err.status === 503) {
-        sandboxRejectedWith503 = true;
-        sandboxErrorMessage = err.message;
+        authRejectedWith503 = true;
+        authErrorMessage = err.message;
       }
     }
-    assert(sandboxRejectedWith503, 'Resend 403 returns HTTP 503 without crashing the server');
+    assert(authRejectedWith503, 'SMTP auth rejection returns HTTP 503 safely without server crash');
     assert(
-      !sandboxErrorMessage.includes('rovicrosales14') && !sandboxErrorMessage.includes('key'),
-      '503 message does not leak private sandbox email or secrets to client',
-      sandboxErrorMessage
+      !authErrorMessage.includes('password') && !authErrorMessage.includes('secret') && !authErrorMessage.includes('BadCredentials'),
+      '503 response never leaks internal SMTP credentials or error strings to client'
     );
+    delete process.env.SIMULATE_SMTP_AUTH_ERROR;
 
     // -----------------------------------------------------------------
-    // TEST 10: Provider Network/Timeout Error Handling
+    // TEST 11: SMTP Connection/Timeout Error Handling
     // -----------------------------------------------------------------
-    console.log('\n--- 10. PROVIDER NETWORK & TIMEOUT ERROR RESILIENCE ---');
-    process.env.SIMULATE_RESEND_ERROR = 'NETWORK_ERROR';
+    console.log('\n--- 11. SMTP NETWORK & TIMEOUT ERROR RESILIENCE ---');
+    process.env.SIMULATE_SMTP_NETWORK_ERROR = 'true';
     process.env.ENABLE_DEV_RESET_FALLBACK = 'false';
 
     let networkRejectedWith503 = false;
@@ -242,12 +266,40 @@ async function runEmailResetPipelineSuite() {
       }
     }
     assert(networkRejectedWith503, 'Network/timeout error returns HTTP 503 safely without server crash');
+    delete process.env.SIMULATE_SMTP_NETWORK_ERROR;
 
     // -----------------------------------------------------------------
-    // TEST 11: Safe Development-Only Testing Mode (ENABLE_DEV_RESET_FALLBACK=true)
+    // TEST 12: Missing Credentials Detection
     // -----------------------------------------------------------------
-    console.log('\n--- 11. SAFE DEVELOPMENT-ONLY DEMONSTRATION MODE ---');
-    process.env.SIMULATE_RESEND_ERROR = '403_SANDBOX'; // Real delivery is blocked by sandbox
+    console.log('\n--- 12. MISSING CREDENTIALS VALIDATION ---');
+    const origUser = process.env.GMAIL_USER;
+    const origPass = process.env.GMAIL_APP_PASSWORD;
+    delete process.env.GMAIL_USER;
+    delete process.env.GMAIL_APP_PASSWORD;
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASS;
+
+    // Direct invocation with TEST_REAL_SMTP=true to trigger credential check
+    process.env.TEST_REAL_SMTP = 'true';
+    const missingRes = await emailService.sendPasswordResetCode({
+      to: testAccountEmail,
+      name: 'Test',
+      code: '123456',
+    });
+    assert(missingRes.success === false, 'Detects missing credentials');
+    assert(
+      Boolean(missingRes.error && missingRes.error.includes('Missing GMAIL_USER or GMAIL_APP_PASSWORD')),
+      'Returns descriptive internal diagnostic for missing credentials'
+    );
+    delete process.env.TEST_REAL_SMTP;
+    if (origUser) process.env.GMAIL_USER = origUser;
+    if (origPass) process.env.GMAIL_APP_PASSWORD = origPass;
+
+    // -----------------------------------------------------------------
+    // TEST 13: Safe Development-Only Testing Mode (ENABLE_DEV_RESET_FALLBACK=true)
+    // -----------------------------------------------------------------
+    console.log('\n--- 13. SAFE DEVELOPMENT-ONLY DEMONSTRATION MODE ---');
+    process.env.SIMULATE_SMTP_NETWORK_ERROR = 'true'; // Delivery blocked
     process.env.ENABLE_DEV_RESET_FALLBACK = 'true';    // But development demo mode is enabled
     delete process.env.SHOW_DEV_RESET_CODE_IN_UI;     // Code display in UI is DISABLED by default
 
@@ -271,7 +323,7 @@ async function runEmailResetPipelineSuite() {
     });
     assert(fallbackAudit !== null, 'PASSWORD_RESET_DEV_FALLBACK_ACTIVE logged in audit table');
 
-    // Retrieve generated code from server test hook (simulating looking at server terminal)
+    // Retrieve generated code from server test hook
     const terminalCode = getTestDeliveredCode(testAccountEmail);
     assert(Boolean(terminalCode && /^\d{6}$/.test(terminalCode)), 'Server-side generated code exists and is 6 digits');
 
@@ -288,13 +340,13 @@ async function runEmailResetPipelineSuite() {
     delete process.env.SHOW_DEV_RESET_CODE_IN_UI;
 
     // -----------------------------------------------------------------
-    // TEST 12: Production Rejection of Development Mock Mode
+    // TEST 14: Production Rejection of Development Mock Mode
     // -----------------------------------------------------------------
-    console.log('\n--- 12. PRODUCTION STRICT REJECTION OF DEV FALLBACK ---');
+    console.log('\n--- 14. PRODUCTION STRICT REJECTION OF DEV FALLBACK ---');
     process.env.NODE_ENV = 'production';
     process.env.ENABLE_DEV_RESET_FALLBACK = 'true'; // Set to true, but NODE_ENV is production!
     process.env.SHOW_DEV_RESET_CODE_IN_UI = 'true'; // Even if UI display is set to true!
-    process.env.SIMULATE_RESEND_ERROR = '403_SANDBOX';
+    process.env.SIMULATE_SMTP_NETWORK_ERROR = 'true';
 
     let prodStrictlyRejected = false;
     try {
@@ -306,14 +358,14 @@ async function runEmailResetPipelineSuite() {
     }
     assert(prodStrictlyRejected, 'Production mode strictly rejects dev fallback and never exposes code even when env vars are set');
     process.env.NODE_ENV = 'test'; // Restore test env
-    delete process.env.SIMULATE_RESEND_ERROR;
+    delete process.env.SIMULATE_SMTP_NETWORK_ERROR;
     delete process.env.ENABLE_DEV_RESET_FALLBACK;
     delete process.env.SHOW_DEV_RESET_CODE_IN_UI;
 
     // -----------------------------------------------------------------
-    // TEST 13: Expired Verification Code Rejection
+    // TEST 15: Expired Verification Code Rejection
     // -----------------------------------------------------------------
-    console.log('\n--- 13. EXPIRED VERIFICATION CODE ENFORCEMENT ---');
+    console.log('\n--- 15. EXPIRED VERIFICATION CODE ENFORCEMENT ---');
     const expiredCode = '987654';
     const { default: cryptoModule } = await import('crypto');
     const { config: testConfig } = await import('../config');
@@ -340,9 +392,9 @@ async function runEmailResetPipelineSuite() {
     assert(expiredRejected, 'Expired verification code is rejected with HTTP 400 and clear expired message');
 
     // -----------------------------------------------------------------
-    // TEST 14: Rate Limiting Enforcement on Password Reset Route
+    // TEST 16: Rate Limiting Enforcement on Password Reset Route
     // -----------------------------------------------------------------
-    console.log('\n--- 14. AUTHENTICATION & RESET RATE LIMITING ---');
+    console.log('\n--- 16. AUTHENTICATION & RESET RATE LIMITING ---');
     let rateLimitTriggered = false;
     for (let i = 0; i < 35; i++) {
       try {
@@ -372,7 +424,7 @@ async function runEmailResetPipelineSuite() {
   }
 
   console.log('\n========================================================================');
-  console.log(`   EMAIL RESET PIPELINE RESULTS: ${passed} PASSED, ${failed} FAILED`);
+  console.log(`   GMAIL SMTP RESET PIPELINE RESULTS: ${passed} PASSED, ${failed} FAILED`);
   console.log('========================================================================\n');
 
   if (failed > 0) {

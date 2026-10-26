@@ -127,8 +127,8 @@ export const apiClient = {
     }
 
     let responseData: any = null;
-    const contentType = response.headers.get('content-type');
-    if (contentType && contentType.includes('application/json')) {
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
       try {
         responseData = await response.json();
       } catch {
@@ -136,7 +136,31 @@ export const apiClient = {
       }
     } else {
       const text = await response.text().catch(() => '');
-      responseData = text ? { message: text } : null;
+      const isHtml =
+        contentType.includes('text/html') ||
+        text.trim().startsWith('<') ||
+        /<[a-z][\s\S]*>/i.test(text);
+
+      if (isHtml) {
+        // If the server, proxy, or warmup gateway returned an HTML document instead of JSON
+        responseData = {
+          message:
+            'The application server is warming up or temporarily unreachable. Please retry in a few moments.',
+          isHtmlDocument: true,
+        };
+      } else {
+        responseData = text ? { message: text } : null;
+      }
+    }
+
+    // If an API endpoint returns an HTML document (e.g. AI Studio warmup page or Vite SPA index.html),
+    // treat it as an unready server state so callers do not misinterpret HTML as a successful API response
+    if (responseData?.isHtmlDocument) {
+      throw new ApiClientError(
+        'The application server is warming up or temporarily unreachable. Please retry in a few moments.',
+        response.status >= 400 ? response.status : 503,
+        responseData
+      );
     }
 
     if (!response.ok) {
@@ -145,13 +169,20 @@ export const apiClient = {
         this.notifyUnauthorized();
       }
 
-      const errorMessage =
+      let rawErrorMessage =
         responseData?.message ||
         responseData?.error?.message ||
         (typeof responseData?.error === 'string' ? responseData.error : null) ||
         `Request failed with status ${response.status} (${response.statusText})`;
 
-      throw new ApiClientError(errorMessage, response.status, responseData);
+      // Strictly sanitize error message so raw HTML strings or doc tags never leak into UI
+      let cleanErrorMessage = typeof rawErrorMessage === 'string' ? rawErrorMessage : String(rawErrorMessage);
+      if (cleanErrorMessage.trim().startsWith('<') || /<[a-z][\s\S]*>/i.test(cleanErrorMessage)) {
+        cleanErrorMessage =
+          'The application server is warming up or temporarily unreachable. Please retry in a few moments.';
+      }
+
+      throw new ApiClientError(cleanErrorMessage, response.status, responseData);
     }
 
     return responseData as T;
